@@ -96,7 +96,7 @@ RUN rm -rf /home/build/build/*
 # 6. Install DBToaster
 WORKDIR /home/build/dbtoaster-dist
 RUN curl https://dbtoaster.github.io/dist/dbtoaster_2.3_linux.tgz | tar xzf -
-ENV PATH /home/build/dbtoaster-bin/bin:$PATH
+ENV PATH /home/build/dbtoaster-dist/dbtoaster/bin:$PATH
 
 
 # 7. Download and build DbGen
@@ -108,9 +108,15 @@ RUN make
 
 # 8. Build the DBToaster RTEMS app
 WORKDIR /home/build/dbtoaster
-RUN mkdir -p lib
-RUN cp -r /home/build/dbtoaster-dist/lib/dbt_c++/* lib/
-RUN rm lib/libdbtoaster.a
-# ADD dbtoaster/ .
-# RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=arm/realview_pbx_a9_qemu 
-# RUN ./waf build 1>&2
+ADD app/*.cc app/wscript app/Makefile ./
+RUN mkdir -p lib rootfs/examples/data generated
+RUN cp -r /home/build/dbtoaster-dist/dbtoaster/lib/dbt_c++/* lib/
+RUN cp -r /home/build/dbtoaster-dist/dbtoaster/examples/data/tpch rootfs/examples/data/
+RUN rm lib/libdbtoaster.a  # The distribution provided binary is for x86_64-linux
+
+WORKDIR /home/build/dbtoaster-dist/dbtoaster
+RUN dbtoaster -l cpp examples/queries/tpch/query3.sql > /home/build/dbtoaster/generated/Tpch3-V.hpp
+
+WORKDIR /home/build/dbtoaster
+RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=i386/pc586
+RUN ./waf build
