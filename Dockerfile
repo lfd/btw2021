@@ -86,11 +86,11 @@ ENV PATH /home/build/rtems/5/bin:$PATH
 WORKDIR /home/build/build
 RUN $HOME/src/rtems-5.1/configure --prefix=$HOME/rtems/5 --target=i386-rtems5 --enable-rtemsbsp=pc586 --enable-posix --disable-networking --enable-rtems-debug
 RUN make -j && make install
-RUN rm -rf /home/build/build
+RUN rm -rf /home/build/build/*
 
 RUN $HOME/src/rtems-5.1/configure --prefix=$HOME/rtems/5 --target=arm-rtems5 --enable-rtemsbsp="realview_pbx_a9_qemu beagleboneblack" --enable-posix --disable-networking --enable-rtems-debug
 RUN make -j  && make install
-RUN rm -rf /home/build/build
+RUN rm -rf /home/build/build/*
 
 
 # 6. Install DBToaster
