@@ -30,7 +30,7 @@ RUN apt install -y --no-install-recommends \
 	pax \
 	u-boot-tools \
 	libncurses-dev \
-	jre-default
+	default-jre
 
 
 RUN useradd -m -G sudo -s /bin/bash build && echo "build:build" | chpasswd
@@ -38,6 +38,11 @@ USER build
 WORKDIR /home/build
 
 # Prepare directory structure
+## src/              - to store external source packages
+## dbtoaster/       - the measurement code proper (dbtoaster app sources)
+## rtems/           - binary toolchain and BSPs for RTEMS
+## build/           - temporary directory for out-of-tree builds
+## dbtoaster-dist/  - upstream DBToaster distribution including query sources
 RUN mkdir -p $HOME/src $HOME/dbtoaster $HOME/rtems $HOME/build $HOME/dbtoaster-dist
 WORKDIR /home/build/dbtoaster
 RUN curl https://waf.io/waf-2.0.19 > waf
@@ -51,8 +56,13 @@ WORKDIR /home/build/src
 RUN curl https://ftp.rtems.org/pub/rtems/releases/5/5.1/sources/rtems-source-builder-5.1.tar.xz | tar xJf -
 RUN curl https://ftp.rtems.org/pub/rtems/releases/5/5.1/sources/rtems-5.1.tar.xz | tar xJf -
 RUN mv rtems-source-builder-5.1 rsb
-WORKDIR /home/build/src/rsb
 
+# ... and patch up some things
+WORKDIR /home/build/src/rtems-5.1
+ADD rtems.diff  /home/build/src
+RUN cat ../rtems.diff | patch -p1
+
+WORKDIR /home/build/src/rsb
 ADD rsb.patch /home/build/src
 RUN cat ../rsb.patch | patch -p1
 
