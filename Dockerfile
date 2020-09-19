@@ -59,12 +59,12 @@ RUN mv rtems-source-builder-5.1 rsb
 
 # ... and patch up some things
 WORKDIR /home/build/src/rtems-5.1
-ADD rtems.diff  /home/build/src
+ADD patches/rtems.diff  /home/build/src
 RUN cat ../rtems.diff | patch -p1
 
 WORKDIR /home/build/src/rsb
-ADD rsb.patch /home/build/src
-RUN cat ../rsb.patch | patch -p1
+ADD patches/rsb.diff /home/build/src
+RUN cat ../rsb.diff | patch -p1
 
 
 # 2. Check environment
