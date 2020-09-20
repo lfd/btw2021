@@ -134,6 +134,7 @@ RUN TPCH=3 ./waf build
 
 # 11. Build Linux binaries for all TPCH queries
 WORKDIR /home/build/dbtoaster
-CMD /bin/bash -c 'for i in {1..22}; do \
+RUN mkdir -p linux/
+RUN /bin/bash -c 'for i in {1..22}; do \
   TPCH=${i} make; \
 done'
