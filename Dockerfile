@@ -106,17 +106,34 @@ WORKDIR /home/build/src/tpch-dbgen
 RUN make
 
 
-# 8. Build the DBToaster RTEMS app
+# 8. Integrate measurement dispatch code
 WORKDIR /home/build/dbtoaster
 ADD app/*.cc app/wscript app/Makefile ./
 RUN mkdir -p lib rootfs/examples/data generated
 RUN cp -r /home/build/dbtoaster-dist/dbtoaster/lib/dbt_c++/* lib/
+
+
+# 9. Build DBToaster header files for all TPCH queries
+# NOTE: We deliberately don't use -o ... because then the class name \
+# in the generated code is adapted from query to Tpch-Vn, which is an
+# invalid C++ identifier
+WORKDIR /home/build/dbtoaster-dist/dbtoaster/
+RUN /bin/bash -c 'for i in {1..22}; do \
+        echo "Generating DBToaster code for TPCH query ${i}"; \
+        bin/dbtoaster -l cpp examples/queries/tpch/query${i}.sql > $HOME/dbtoaster/generated/Tpch${i}-V.hpp; \
+done'
+
+
+# 10. Build the DBToaster RTEMS app
+WORKDIR /home/build/dbtoaster
 RUN cp -r /home/build/dbtoaster-dist/dbtoaster/examples/data/tpch rootfs/examples/data/
 RUN rm lib/libdbtoaster.a  # The distribution provided binary is for x86_64-linux
-
-WORKDIR /home/build/dbtoaster-dist/dbtoaster
-RUN dbtoaster -l cpp examples/queries/tpch/query3.sql > /home/build/dbtoaster/generated/Tpch3-V.hpp
-
-WORKDIR /home/build/dbtoaster
 RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=i386/pc586
-RUN ./waf build
+RUN TPCH=3 ./waf build
+
+
+# 11. Build Linux binaries for all TPCH queries
+WORKDIR /home/build/dbtoaster
+CMD /bin/bash -c 'for i in {1..22}; do \
+  TPCH=${i} make; \
+done'

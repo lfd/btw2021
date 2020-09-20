@@ -1,4 +1,5 @@
 from __future__ import print_function
+import os
 
 rtems_version = "5"
 
@@ -22,7 +23,7 @@ def options(opt):
 
 def configure(conf):
     conf.env.LIB_DBT       = ['libdbtoaster']
-    conf.env.LIBPATH_DBT   = ['../../../../bare/dbtoaster/lib/dbt_c++/']
+    conf.env.LIBPATH_DBT   = ['lib/']
     rtems.configure(conf, bsp_configure = bsp_configure)
 
 def build(bld):
@@ -45,13 +46,20 @@ def build(bld):
         use='toaster_objs',
         target='dbtoaster')
 
+    bld(features = 'cxx cxxstlib',
+        target   = 'measure',
+        includes = 'lib/ ./',
+	## NOTE: Passing cxxflags via an array, which is more appropriate, 
+        ## leads to waf wrongly passing arguments to gcc
+        cxxflags = '-g -O3 -include generated/Tpch' + os.getenv('TPCH', '3') + '-V.hpp',
+        source   = 'measure.cc')
+
     bld(features = 'cxx cxxprogram',
         target = 'dbtoaster.exe',
 	includes = 'lib/',
-        cxxflags = '-g -O0',
+        cxxflags = '-g -O3',
         ldflags  = 'libdbtoaster.a',
-	use      = 'dbtoaster',
-        source = ['measure.cc',
-		  'dbtoaster.cc',
+	use      = ['dbtoaster', 'measure'],
+        source = ['dbtoaster.cc',
 	          'fs-root-tar.c',
                   'init.cc'])
