@@ -1,0 +1,124 @@
+commit 0e44ebd221936ec7649e1481e23ec6a9cbb108d1
+Author: Wolfgang Mauerer <wolfgang.mauerer@othr.de>
+Date:   Tue Sep 22 01:06:31 2020 +0200
+
+    reworked log commit
+
+diff --git a/iprogram.cpp b/iprogram.cpp
+index 389bf62..a4bdf0b 100644
+--- a/iprogram.cpp
++++ b/iprogram.cpp
+@@ -33,6 +33,7 @@ void IProgram::run( bool async ) {
+  */
+ IProgram::snapshot_t IProgram::get_snapshot()
+ {
++
+ 	if( !is_finished() )
+ 	{
+ 		request_snapshot();
+@@ -141,4 +142,31 @@ IProgram::snapshot_t IProgram::wait_for_snapshot()
+ 	return result;
+ }
+ 
++void IProgram::log_timestamp(struct timeval val) {
++    log_buffer.push_back(val);
++}
++
++void IProgram::print_log_buffer() {
++	struct timeval start, end, diff;
++
++	if (log_buffer.size() < 2) {
++		cerr << "Log buffer is empty. Did you forget to set --log-count?" << endl;
++		return;
++	}
++
++	start = log_buffer[0];
++
++	for (auto it = log_buffer.begin() + 1; it != log_buffer.end(); ++it)  {
++		end = *it;
++		timersub(&end, &start, &diff);
++		cout << (diff.tv_sec * 10e6 + diff.tv_usec) << endl;
++
++		start = *it;
++
++	}
++
++	log_buffer.clear();
++}
++
++
+ }
+diff --git a/iprogram.hpp b/iprogram.hpp
+index e7336bf..877239b 100644
+--- a/iprogram.hpp
++++ b/iprogram.hpp
+@@ -14,8 +14,13 @@
+ #include <future>
+ #include <functional>
+ #include <cassert>
++#include <string>
++#include <vector>
++#include <sys/time.h>
+ #include "serialization.hpp"
+ 
++using namespace std;
++
+ namespace dbtoaster {
+ 
+ struct event_t;
+@@ -32,6 +37,7 @@ struct tlq_t;
+ 
+ class IProgram {
+ public:
++    std::vector<struct timeval> log_buffer;
+     typedef std::shared_ptr<tlq_t> snapshot_t;
+ 
+     IProgram() :
+@@ -74,6 +80,11 @@ public:
+      */
+     snapshot_t get_snapshot();
+ 
++    /**
++     * buffer logs to print after execution
++     */
++    void print_log_buffer();
++
+ protected:
+     /**
+      * This should get overridden by a function that reads stream events and
+@@ -134,6 +145,8 @@ protected:
+      */
+     snapshot_t wait_for_snapshot();
+ 
++    void log_timestamp(struct timeval val);
++
+ private:
+     bool running;
+     bool finished;
+diff --git a/program_base.cpp b/program_base.cpp
+index d234a4a..76c4d97 100644
+--- a/program_base.cpp
++++ b/program_base.cpp
+@@ -216,6 +216,8 @@ ProgramBase::ProgramBase(int argc, char* argv[]) :
+ }
+ 
+ void ProgramBase::process_streams() {
++	log_buffer.reserve(stream_multiplexer.eventList->size() +
++		       stream_multiplexer.eventList->size() + 1);
+ 	if(!stream_multiplexer.eventList->empty()) {
+ 		std::list<event_t>::iterator it = stream_multiplexer.eventList->begin();
+ 		std::list<event_t>::iterator it_end = stream_multiplexer.eventList->end();
+@@ -303,11 +305,11 @@ void ProgramBase::process_stream_event(const event_t& _evt) {
+ 
+ 	process_event(_evt, false);
+ 
++	// buffer output and only print after execution
+ 	if (log_count_every && (tuple_count % log_count_every == 0)) {
+ 		struct timeval tp;
+ 		gettimeofday(&tp, NULL);
+-		cout << tuple_count << " tuples processed at " << tp.tv_sec << "s+"
+-				<< tp.tv_usec << "us" << endl;
++		IProgram::log_timestamp(tp);
+ 	}
+ 	tuple_count += 1;
+ 

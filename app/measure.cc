@@ -13,9 +13,8 @@ int main(int argc, char* argv[]) {
     p.init();
 
     p.run(false);
-
     snap = p.get_snapshot();
-    DBT_SERIALIZATION_NVP_OF_PTR(cout, snap);
-    cout << std::endl;
+    p.print_log_buffer();
+
     return 0;
 }

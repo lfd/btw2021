@@ -106,15 +106,18 @@ WORKDIR /home/build/src/tpch-dbgen
 RUN make
 
 
-# 8. Integrate measurement dispatch code
+# 8. Integrate measurement dispatch code (and patch DBToaster)
 WORKDIR /home/build/dbtoaster
 ADD app/*.cc app/wscript app/Makefile ./
 RUN mkdir -p lib rootfs/examples/data generated
-RUN cp -r /home/build/dbtoaster-dist/dbtoaster/lib/dbt_c++/* lib/
+RUN cp -r /home/build/dbtoaster-dist/dbtoaster/lib/dbt_c++/* lib
+WORKDIR /home/build/dbtoaster/lib
+ADD patches/dbtoaster_log.diff /home/build/src
+RUN cat /home/build/src/dbtoaster_log.diff | patch -p1
 
 
 # 9. Build DBToaster header files for all TPCH queries
-# NOTE: We deliberately don't use -o ... because then the class name \
+# NOTE: We deliberately don't use -o ... because then the class name
 # in the generated code is adapted from query to Tpch-Vn, which is an
 # invalid C++ identifier
 WORKDIR /home/build/dbtoaster-dist/dbtoaster/
@@ -124,17 +127,36 @@ RUN /bin/bash -c 'for i in {1..22}; do \
 done'
 
 
-# 10. Build the DBToaster RTEMS app
+# 10. Build TPCH example data
+WORKDIR /home/build/src/tpch-dbgen
+RUN ./dbgen -s 0.1
+RUN mkdir -p /home/build/dbtoaster/rootfs/examples/data/tpch/
+RUN /bin/bash -c 'for file in *.tbl; do \
+   f=`basename ${file} .tbl`; \
+   cp ${f}.tbl /home/build/dbtoaster/rootfs/examples/data/tpch/${f}.csv; \
+done'
+
+# 11. Build the DBToaster RTEMS app for all TPCH queries
 WORKDIR /home/build/dbtoaster
-RUN cp -r /home/build/dbtoaster-dist/dbtoaster/examples/data/tpch rootfs/examples/data/
+RUN mkdir -p rtems
 RUN rm lib/libdbtoaster.a  # The distribution provided binary is for x86_64-linux
 RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=i386/pc586
-RUN TPCH=3 ./waf build
+RUN /bin/bash -c 'for i in {1..22}; do \
+  rm -f build/i386-rtems5-pc586/measure.cc.*.{o,d}; \
+  TPCH=${i} ./waf build; \
+  mv build/i386-rtems5-pc586/dbtoaster.exe rtems/dbtoaster${i}.exe; \
+done'
 
 
-# 11. Build Linux binaries for all TPCH queries
+# 12. Build Linux binaries for all TPCH queries
 WORKDIR /home/build/dbtoaster
 RUN mkdir -p linux/
 RUN /bin/bash -c 'for i in {1..22}; do \
   TPCH=${i} make; \
 done'
+
+# 13. Generate self-contained measurement package that can
+# be deployed on Linux x86_64 targets
+WORKDIR /home/build/dbtoaster
+RUN ln -s rootfs/examples .
+RUN tar chJvf /tmp/meas.tar.xz linux/ examples/
