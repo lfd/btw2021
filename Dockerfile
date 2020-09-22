@@ -141,6 +141,9 @@ done'
 # 10. Build TPCH example data
 WORKDIR /home/build/src/tpch-dbgen
 RUN ./dbgen -s 0.1
+# On occasion, the dbgen dungpile seemingly randomly assigns permissions
+# 101 to generated tbl files. Dude...
+RUN chmod 644 *.tbl
 RUN mkdir -p /home/build/dbtoaster/rootfs/examples/data/tpch/
 RUN /bin/bash -c 'for file in *.tbl; do \
    f=`basename ${file} .tbl`; \
