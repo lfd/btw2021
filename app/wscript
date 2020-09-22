@@ -46,7 +46,7 @@ def build(bld):
         use='toaster_objs',
         target='dbtoaster')
 
-    bld(features = 'cxx cxxstlib',
+    bld(features = 'cxx',
         target   = 'measure',
         includes = 'lib/ ./',
 	## NOTE: Passing cxxflags via an array, which is more appropriate, 
