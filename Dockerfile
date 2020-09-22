@@ -13,6 +13,8 @@ RUN apt install -y --no-install-recommends \
 	build-essential \
 	python \
 	python-dev \
+	python3 \
+	python3-dev \
 	unzip \
         sudo \
 	joe \
@@ -32,6 +34,11 @@ RUN apt install -y --no-install-recommends \
 	libncurses-dev \
 	default-jre
 
+# To build gcc with rsb, we need python 2.7 (otherwise, the build breaks)
+# To use waf, we want python 3.6 (otherwise, each command invocations
+# stalls for 30'' for some reason before doing anything)
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python2.7 2
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.6 1
 
 RUN useradd -m -G sudo -s /bin/bash build && echo "build:build" | chpasswd
 USER build
@@ -105,6 +112,10 @@ RUN git clone https://github.com/electrum/tpch-dbgen.git
 WORKDIR /home/build/src/tpch-dbgen
 RUN make
 
+
+USER root
+RUN update-alternatives --set python /usr/bin/python3.6
+USER build
 
 # 8. Integrate measurement dispatch code (and patch DBToaster)
 WORKDIR /home/build/dbtoaster
