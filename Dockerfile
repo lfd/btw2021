@@ -173,4 +173,6 @@ done'
 # be deployed on Linux x86_64 targets
 WORKDIR /home/build/dbtoaster
 RUN ln -s rootfs/examples .
-RUN tar chJvf /tmp/meas.tar.xz linux/ examples/
+ADD measure/dispatch.sh .
+ADD measure/stressors .
+RUN tar --transform 's,^,measure/,' -cjhf ~/measure.tar.bz2 dispatch.sh stressors linux/ examples/
