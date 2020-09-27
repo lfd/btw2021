@@ -19,6 +19,7 @@ RUN apt install -y --no-install-recommends \
         sudo \
 	joe \
 	bison \
+	less \
 	flex \
 	ca-certificates \
 	curl \
@@ -32,7 +33,8 @@ RUN apt install -y --no-install-recommends \
 	pax \
 	u-boot-tools \
 	libncurses-dev \
-	default-jre
+	default-jre \
+	stress-ng
 
 # To build gcc with rsb, we need python 2.7 (otherwise, the build breaks)
 # To use waf, we want python 3.6 (otherwise, each command invocations
@@ -117,30 +119,42 @@ USER root
 RUN update-alternatives --set python /usr/bin/python3.6
 USER build
 
-# 8. Integrate measurement dispatch code (and patch DBToaster)
+# 8. Integrate measurement dispatch code
 WORKDIR /home/build/dbtoaster
 ADD app/*.cc app/wscript app/Makefile ./
-RUN mkdir -p lib rootfs/examples/data generated
-RUN cp -r /home/build/dbtoaster-dist/dbtoaster/lib/dbt_c++/* lib
-WORKDIR /home/build/dbtoaster/lib
-ADD patches/dbtoaster_log.diff /home/build/src
-RUN cat /home/build/src/dbtoaster_log.diff | patch -p1
+RUN mkdir -p rootfs/examples/data generated
 
+# 9. Build the DBToaster backend (i.e., libdbtoaster.a)
+WORKDIR /home/build/src
+RUN git clone https://github.com/lfd/dbtoaster-backend.git
+WORKDIR /home/build/src/dbtoaster-backend
+RUN git checkout btw2021
+WORKDIR /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/lib
+RUN make -j
+
+WORKDIR /home/build/dbtoaster
+RUN ln -s /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/lib .
+# TODO: These files should be included in the btw2021 repo and
+# be copied into dbtoaster once they are in a mature state
+RUN cp /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/StreamProgram.cpp   .
+RUN cp /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/driver_sequential.cpp .
+RUN cp /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/StreamProgram.hpp .
 
 # 9. Build DBToaster header files for all TPCH queries
-# NOTE: We deliberately don't use -o ... because then the class name
-# in the generated code is adapted from query to Tpch-Vn, which is an
+# NOTE: We deliberately don't use -o Tpch<n>-V.hpp because then the class name
+# in the generated code is adapted from query to Tpch<n>-V, which is an
 # invalid C++ identifier
 WORKDIR /home/build/dbtoaster-dist/dbtoaster/
-RUN /bin/bash -c 'for i in {1..22}; do \
-        echo "Generating DBToaster code for TPCH query ${i}"; \
+#RUN /bin/bash -c 'for i in {1..22}; do \
+RUN /bin/bash -c 'for i in 1 2 6 12 14; do \
+	echo "Generating DBToaster code for TPCH query ${i}"; \
         bin/dbtoaster -l cpp examples/queries/tpch/query${i}.sql > $HOME/dbtoaster/generated/Tpch${i}-V.hpp; \
 done'
 
 
 # 10. Build TPCH example data
 WORKDIR /home/build/src/tpch-dbgen
-RUN ./dbgen -s 0.1
+RUN ./dbgen -s 1
 # On occasion, the dbgen dungpile seemingly randomly assigns permissions
 # 101 to generated tbl files. Dude...
 RUN chmod 644 *.tbl
@@ -151,21 +165,22 @@ RUN /bin/bash -c 'for file in *.tbl; do \
 done'
 
 # 11. Build the DBToaster RTEMS app for all TPCH queries
-WORKDIR /home/build/dbtoaster
-RUN mkdir -p rtems
-RUN rm lib/libdbtoaster.a  # The distribution provided binary is for x86_64-linux
-RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=i386/pc586
-RUN /bin/bash -c 'for i in {1..22}; do \
-  rm -f build/i386-rtems5-pc586/measure.cc.*.{o,d}; \
-  TPCH=${i} ./waf build; \
-  mv build/i386-rtems5-pc586/dbtoaster.exe rtems/dbtoaster${i}.exe; \
-done'
+#WORKDIR /home/build/dbtoaster
+#RUN mkdir -p rtems
+#RUN rm lib/libdbtoaster.a  # The distribution provided binary is for x86_64-linux
+#RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=i386/pc586
+#RUN /bin/bash -c 'for i in {1..22}; do \
+#  rm -f build/i386-rtems5-pc586/measure.cc.*.{o,d}; \
+#  TPCH=${i} ./waf build; \
+#  mv build/i386-rtems5-pc586/dbtoaster.exe rtems/dbtoaster${i}.exe; \
+#done'
 
 
 # 12. Build Linux binaries for all TPCH queries
 WORKDIR /home/build/dbtoaster
 RUN mkdir -p linux/
-RUN /bin/bash -c 'for i in {1..22}; do \
+#RUN /bin/bash -c 'for i in {1..22}; do \
+RUN /bin/bash -c 'for i in 1 2 6 12 14; do \
   TPCH=${i} make; \
 done'
 
@@ -176,3 +191,60 @@ RUN ln -s rootfs/examples .
 ADD measure/dispatch.sh .
 ADD measure/stressors .
 RUN tar --transform 's,^,measure/,' -cjhf ~/measure.tar.bz2 dispatch.sh stressors linux/ examples/
+
+
+########################### Scrap below here ##############################
+#USER root
+#RUN apt-get install  -y --no-install-recommends ocaml
+##libboost-dev \
+##                     libboost-filesystem-dev libboost-program-options-dev \
+##                     libboost-thread-dev
+#USER build
+
+#WORKDIR /home/build/src
+#RUN git clone https://github.com/dbtoaster/dbtoaster-a5.git
+##ADD patches/dbtoaster-a5/0001-Fix-STL-vs-Boost-bitrot.patch .
+#ADD patches/dbtoaster-a5/0002-Fix-makefile.patch .
+#ADD patches/dbtoaster-a5/0003-Don-t-statically-link-ocaml-objects.patch .
+##ADD patches/dbtoaster-a5/0004-Add-dispatcher-file.patch .
+##ADD patches/dbtoaster-a5/0005-Minimise-perturbations-and-system-noise-during-measu.patch .
+
+#WORKDIR /home/build/src/dbtoaster-a5
+##RUN cat ../0001-Fix-STL-vs-Boost-bitrot.patch | patch -p1
+#RUN cat ../0002-Fix-makefile.patch | patch -p1
+#RUN cat ../0003-Don-t-statically-link-ocaml-objects.patch | patch -p1
+##RUN cat ../0004-Add-dispatcher-file.patch | patch -p1
+##RUN cat ../0005-Minimise-perturbations-and-system-noise-during-measu.patch | patch -p1
+
+#RUN make bin/dbtoaster
+##WORKDIR /home/build/src/dbtoaster-a5/lib/dbt_c++
+##RUN make -j
+
+# Change relative data input path that is encoded
+# into DBToaster-generated header files to data/tpch
+#RUN sed -i 's,../../experiments/data/tpch/,data/tpch/,g' test/queries/tpch/schemas.sql
+
+# NOTE: We deliberately don't use -o Tpch<n>-V.hpp because then the class name
+# in the generated code is adapted from query to Tpch<n>-V, which is an
+# invalid C++ identifier
+#WORKDIR /home/build/src/dbtoaster-a5/
+#RUN mkdir -p /home/build/src/dbt-headers
+#RUN /bin/bash -c 'for i in {1..22}; do \
+#    bin/dbtoaster -l CPP test/queries/tpch/query${i}.sql > ~/src/dbt-headers/Tpch${i}-V.hpp; \
+#done'
+
+#USER root
+#RUN setcap cap_ipc_lock+eip linux/measure1
+#RUN setcap cap_ipc_lock+eip linux/measure6
+#RUN setcap cap_ipc_lock+eip linux/measure12
+#USER build
+
+
+#    c++ -g -I. -Ilib/dbt_c++ -include query${i}.hpp main.cpp lib/dbt_c++/libdbtoaster.a -lboost_serialization 
+#        -lboost_program_options -lboost_thread -lpthread -lboost_filesystem -lboost_iostreams -o linux/measure${i}; 
+
+
+#echo "deb https://dl.bintray.com/sbt/debian /" | sudo tee -a /etc/apt/sources.list.d/sbt.list
+#curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+#sudo apt-get update
+#sudo apt-get install sbt

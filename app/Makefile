@@ -7,8 +7,8 @@
 
 TPCH ?= 1
 
-measure: libdbtoaster measure.cc
-	$(CXX) $(CXXFLAGS) -include generated/Tpch$(TPCH)-V.hpp -o linux/measure${TPCH} measure.cc -Ilib -O3 lib/libdbtoaster.a
+measure: libdbtoaster
+	$(CXX) $(CXXFLAGS) -include generated/Tpch$(TPCH)-V.hpp -o linux/tpch${TPCH} StreamProgram.cpp driver_sequential.cpp -Ilib/ -O3 lib/libdbtoaster.a
 
 libdbtoaster:
 	$(MAKE) -C lib
