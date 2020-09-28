@@ -154,7 +154,8 @@ done'
 
 # 10. Build TPCH example data
 WORKDIR /home/build/src/tpch-dbgen
-RUN ./dbgen -s 1
+RUN rm -rf *.tbl
+RUN ./dbgen -s 0.1
 # On occasion, the dbgen dungpile seemingly randomly assigns permissions
 # 101 to generated tbl files. Dude...
 RUN chmod 644 *.tbl
@@ -165,15 +166,16 @@ RUN /bin/bash -c 'for file in *.tbl; do \
 done'
 
 # 11. Build the DBToaster RTEMS app for all TPCH queries
-#WORKDIR /home/build/dbtoaster
-#RUN mkdir -p rtems
-#RUN rm lib/libdbtoaster.a  # The distribution provided binary is for x86_64-linux
-#RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=i386/pc586
+WORKDIR /home/build/dbtoaster
+RUN mkdir -p rtems
+RUN rm lib/libdbtoaster.a  # The distribution provided binary is for x86_64-linux
+RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=i386/pc586
 #RUN /bin/bash -c 'for i in {1..22}; do \
-#  rm -f build/i386-rtems5-pc586/measure.cc.*.{o,d}; \
-#  TPCH=${i} ./waf build; \
-#  mv build/i386-rtems5-pc586/dbtoaster.exe rtems/dbtoaster${i}.exe; \
-#done'
+RUN /bin/bash -c 'for i in 1 6; do \
+  rm -f build/i386-rtems5-pc586/{StreamDriver,driver_sequential}.*.{o,d}; \
+  TPCH=${i} ./waf build; \
+  mv build/i386-rtems5-pc586/dbtoaster.exe rtems/dbtoaster${i}.exe; \
+done'
 
 
 # 12. Build Linux binaries for all TPCH queries

@@ -47,19 +47,20 @@ def build(bld):
         target='dbtoaster')
 
     bld(features = 'cxx',
-        target   = 'measure',
+        target   = 'driver',
         includes = 'lib/ ./',
 	## NOTE: Passing cxxflags via an array, which is more appropriate, 
         ## leads to waf wrongly passing arguments to gcc
         cxxflags = '-g -O3 -include generated/Tpch' + os.getenv('TPCH', '3') + '-V.hpp',
-        source   = 'measure.cc')
+        source   = ['driver_sequential.cpp', 'StreamProgram.cpp'])
+
 
     bld(features = 'cxx cxxprogram',
         target = 'dbtoaster.exe',
 	includes = 'lib/',
         cxxflags = '-g -O3',
         ldflags  = 'libdbtoaster.a',
-	use      = ['dbtoaster', 'measure'],
+	use      = ['dbtoaster', 'driver'],
         source = ['dbtoaster.cc',
 	          'fs-root-tar.c',
                   'init.cc'])
