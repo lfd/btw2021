@@ -52,7 +52,7 @@ def build(bld):
 	## NOTE: Passing cxxflags via an array, which is more appropriate, 
         ## leads to waf wrongly passing arguments to gcc
         cxxflags = '-g -O3 -include generated/Tpch' + os.getenv('TPCH', '3') + '-V.hpp',
-        source   = ['driver_sequential.cpp', 'StreamProgram.cpp'])
+        source   = 'driver_sequential.cpp')
 
 
     bld(features = 'cxx cxxprogram',

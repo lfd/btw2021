@@ -3,12 +3,16 @@
 # via -include. This means we may want to rebuild even
 # when measure.cc has not changed.
 # 
-.PHONY: measure clean libdbtoaster
+.PHONY: measure finance clean libdbtoaster
 
 TPCH ?= 1
+FINANCE ?= vwap
 
 measure: libdbtoaster
-	$(CXX) $(CXXFLAGS) -include generated/Tpch$(TPCH)-V.hpp -o linux/tpch${TPCH} StreamProgram.cpp driver_sequential.cpp -Ilib/ -O3 lib/libdbtoaster.a
+	$(CXX) $(CXXFLAGS) -include generated/Tpch$(TPCH)-V.hpp -o linux/tpch$(TPCH) driver_sequential.cpp -Ilib/ -O3 lib/libdbtoaster.a
+
+finance: libdbtoaster
+	$(CXX) $(CXXFLAGS) -include generated/$(FINANCE).hpp -o linux/$(FINANCE) driver_sequential.cpp -Ilib/ -O3 lib/libdbtoaster.a
 
 libdbtoaster:
 	$(MAKE) -C lib

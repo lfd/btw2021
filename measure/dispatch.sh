@@ -1,7 +1,7 @@
 #! /bin/bash
 
 if [[ $# -ne 6 ]]; then
-    echo "Usage: $0 stress taskset_load taskset_measure scenario label"
+    echo "Usage: $0 duration stress taskset_load taskset_measure scenario label"
     exit 2
 fi
 
@@ -11,7 +11,7 @@ taskset_load=$3  ## Taskset for load cores
 taskset_meas=$4  ## Taskset for measurement (i.e., payload) cores
 scenario=$5      ## Scenario identifier (e.g., linuxrt)
 label=$6         ## Identification label
-LOGCOUNT=10
+LOGCOUNT=1
 
 ##no_stressors=$(cat stressors | grep "^[^#;]" | wc -l)
 ##stressor_timeout=$(($duration / $no_stressors))
@@ -26,6 +26,7 @@ LOGCOUNT=10
 OUTDIR="res_duration-${duration}_stress-${stress}_scenario-${scenario}_${label}/"
 rm -rf ${OUTDIR}
 
+MEASURE=tpch
 #for i in {1..4} {6..14} {16..22}; do
 for i in 1 6 12; do
         echo -n "Executing TPCH test ${i} (`date "+%H:%M:%S"`): ";
@@ -34,16 +35,16 @@ for i in 1 6 12; do
 	case "${scenario}" in
 	    fifo)
 		tsm="taskset --cpu-list ${taskset_meas}";
-		execstr="sudo chrt -f 99 linux/measure${i} --log-count=${LOGCOUNT} >> ${OUTDIR}/${i}/latencies.txt";
+		execstr="sudo chrt -f 99 linux/${MEASURE}${i} --log-count=${LOGCOUNT} >> ${OUTDIR}/${i}/latencies.txt";
 	    ;;
 	    shield)
 		sudo cset shield --cpu ${taskset_meas} --kthread=on;
 		tsm="";
-		execstr="sudo cset shield --exec -- linux/measure${i} --log-count=${LOGCOUNT} | grep -v cset >> ${OUTDIR}/${i}/latencies.txt";
+		execstr="sudo cset shield --exec -- linux/${MEASURE}${i} --log-count=${LOGCOUNT} | grep -v cset >> ${OUTDIR}/${i}/latencies.txt";
 	    ;;
 	    default)
 		tsm="taskset --cpu-list ${taskset_meas}"
-		execstr="linux/measure${i} --log-count=${LOGCOUNT} >> ${OUTDIR}/${i}/latencies.txt";
+		execstr="linux/${MEASURE}${i} --log-count=${LOGCOUNT} >> ${OUTDIR}/${i}/latencies.txt";
 	    ;;
 	    *)
 	    	echo "Scenario ${scenario} is not known!"

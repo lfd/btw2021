@@ -136,11 +136,9 @@ WORKDIR /home/build/dbtoaster
 RUN ln -s /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/lib .
 # TODO: These files should be included in the btw2021 repo and
 # be copied into dbtoaster once they are in a mature state
-RUN cp /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/StreamProgram.cpp   .
 RUN cp /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/driver_sequential.cpp .
-RUN cp /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/StreamProgram.hpp .
 
-# 9. Build DBToaster header files for all TPCH queries
+# 9. Build DBToaster header files for relevant TPCH and financial queries
 # NOTE: We deliberately don't use -o Tpch<n>-V.hpp because then the class name
 # in the generated code is adapted from query to Tpch<n>-V, which is an
 # invalid C++ identifier
@@ -150,12 +148,19 @@ RUN /bin/bash -c 'for i in 1 2 6 12 14; do \
 	echo "Generating DBToaster code for TPCH query ${i}"; \
         bin/dbtoaster -l cpp examples/queries/tpch/query${i}.sql > $HOME/dbtoaster/generated/Tpch${i}-V.hpp; \
 done'
+RUN /bin/bash -c 'for Q in vwap pricespread brokerspread missedtrades; do \
+	echo "Generating DBToaster code for financial query ${Q}"; \
+        bin/dbtoaster -l cpp examples/queries/finance/${Q}.sql > $HOME/dbtoaster/generated/${Q}.hpp; \
+done'
 
 
-# 10. Build TPCH example data
+
+# 10. Build TPCH example data, and copy finance data
+# (we delibertely only build a very small data set for
+# to "smoke test" if compiled binaries work properly)
 WORKDIR /home/build/src/tpch-dbgen
 RUN rm -rf *.tbl
-RUN ./dbgen -s 0.1
+RUN ./dbgen -s 0.01
 # On occasion, the dbgen dungpile seemingly randomly assigns permissions
 # 101 to generated tbl files. Dude...
 RUN chmod 644 *.tbl
@@ -164,6 +169,8 @@ RUN /bin/bash -c 'for file in *.tbl; do \
    f=`basename ${file} .tbl`; \
    cp ${f}.tbl /home/build/dbtoaster/rootfs/examples/data/tpch/${f}.csv; \
 done'
+RUN cp /home/build/dbtoaster-dist/dbtoaster/examples/data/finance.csv /home/build/dbtoaster/rootfs/examples/data/
+
 
 # 11. Build the DBToaster RTEMS app for all TPCH queries
 WORKDIR /home/build/dbtoaster
@@ -178,12 +185,16 @@ RUN /bin/bash -c 'for i in 1 6; do \
 done'
 
 
-# 12. Build Linux binaries for all TPCH queries
+# 12. Build Linux binaries for all TPCH and financial queries
 WORKDIR /home/build/dbtoaster
 RUN mkdir -p linux/
 #RUN /bin/bash -c 'for i in {1..22}; do \
 RUN /bin/bash -c 'for i in 1 2 6 12 14; do \
-  TPCH=${i} make; \
+  TPCH=${i} make measure; \
+done'
+
+RUN /bin/bash -c 'for Q in vwap pricespread brokerspread missedtrades; do \
+  FINANCE=${Q} make finance; \
 done'
 
 # 13. Generate self-contained measurement package that can

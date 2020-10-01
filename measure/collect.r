@@ -3,7 +3,8 @@
 library(stringr)
 
 args = commandArgs(trailingOnly=TRUE)
-tpch.list <- c(1:4, 6:14, 16:22)
+#tpch.list <- c(1:4, 6:14, 16:22)
+tpch.list <- c(1,6,12,14)
 
 if (length(args) == 0) {
   cat("Please specify which result folder to collect into a data frame\n")
@@ -13,6 +14,7 @@ if (length(args) == 0) {
 read.experiment <- function(tpch.list, experiment) {
   res <- do.call(rbind, lapply(tpch.list, function(i) {
     file <- str_c(experiment, "/", i, "/latencies.txt")
+    cat ("Processing ", file, "\n")
     dat <- data.frame(latency=read.table(file, header=FALSE)$V1,
                       tpch=i, experiment=experiment)
     return(dat)
