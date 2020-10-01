@@ -125,6 +125,7 @@ ADD app/*.cc app/wscript app/Makefile ./
 RUN mkdir -p rootfs/examples/data generated
 
 # 9. Build the DBToaster backend (i.e., libdbtoaster.a)
+RUN echo "Hello, world"
 WORKDIR /home/build/src
 RUN git clone https://github.com/lfd/dbtoaster-backend.git
 WORKDIR /home/build/src/dbtoaster-backend
@@ -144,11 +145,11 @@ RUN cp /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/driver_sequential.cpp
 # invalid C++ identifier
 WORKDIR /home/build/dbtoaster-dist/dbtoaster/
 #RUN /bin/bash -c 'for i in {1..22}; do \
-RUN /bin/bash -c 'for i in 1 2 6 12 14; do \
+RUN /bin/bash -c 'for i in 1 2 6 12 14 11a 18a; do \
 	echo "Generating DBToaster code for TPCH query ${i}"; \
         bin/dbtoaster -l cpp examples/queries/tpch/query${i}.sql > $HOME/dbtoaster/generated/Tpch${i}-V.hpp; \
 done'
-RUN /bin/bash -c 'for Q in vwap pricespread brokerspread missedtrades; do \
+RUN /bin/bash -c 'for Q in vwap axfinder pricespread brokerspread missedtrades; do \
 	echo "Generating DBToaster code for financial query ${Q}"; \
         bin/dbtoaster -l cpp examples/queries/finance/${Q}.sql > $HOME/dbtoaster/generated/${Q}.hpp; \
 done'
@@ -172,7 +173,8 @@ done'
 RUN cp /home/build/dbtoaster-dist/dbtoaster/examples/data/finance.csv /home/build/dbtoaster/rootfs/examples/data/
 
 
-# 11. Build the DBToaster RTEMS app for all TPCH queries
+# 11. Build the DBToaster RTEMS app for x86 and all TPCH queries, using
+# the TSC for time measurements
 WORKDIR /home/build/dbtoaster
 RUN mkdir -p rtems
 RUN rm lib/libdbtoaster.a  # The distribution provided binary is for x86_64-linux
@@ -180,7 +182,7 @@ RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=i386/pc586
 #RUN /bin/bash -c 'for i in {1..22}; do \
 RUN /bin/bash -c 'for i in 1 6; do \
   rm -f build/i386-rtems5-pc586/{StreamDriver,driver_sequential}.*.{o,d}; \
-  TPCH=${i} ./waf build; \
+  CXXFLAGS=-DUSE_RDTSC TPCH=${i} ./waf build; \
   mv build/i386-rtems5-pc586/dbtoaster.exe rtems/dbtoaster${i}.exe; \
 done'
 
