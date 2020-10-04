@@ -205,10 +205,10 @@ WORKDIR /home/build/dbtoaster
 RUN ln -s rootfs/data .
 ADD measure/dispatch.sh .
 ADD measure/caps.sh .
-ADD measure/stressors .
-WORKDIR /home/build/dbtoaster/data/tpch
 ADD measure/rename.sh .
+WORKDIR /home/build/dbtoaster/data/tpch
+ADD measure/caps.sh .
 RUN cp /home/build/src/tpch-dbgen/dbgen .
 RUN cp /home/build/src/tpch-dbgen/dists.dss .
 WORKDIR /home/build/dbtoaster
-RUN tar --transform 's,^,measure/,' -cjhf ~/measure.tar.bz2 dispatch.sh linux/ data/
+RUN tar --transform 's,^,measure/,' -cjhf ~/measure.tar.bz2 *.sh linux/ data/

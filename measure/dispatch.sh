@@ -26,25 +26,36 @@ LOGCOUNT=1
 OUTDIR="res_duration-${duration}_stress-${stress}_scenario-${scenario}_${label}/"
 rm -rf ${OUTDIR}
 
+if [ -f "arguments.sh" ]; then
+    . arguments.sh
+else
+    declare -A arguments=()
+fi
+
 MEASURE=tpch
-#for i in {1..4} {6..14} {16..22}; do
-for i in 1 6 12; do
+for i in 1 2 6 12 14 11a 18a; do
         echo -n "Executing TPCH test ${i} (`date "+%H:%M:%S"`): ";
         mkdir -p ${OUTDIR}/${i};
-
+	dbt="linux/${MEASURE}${i} --log-count=${LOGCOUNT} --no-output --timeout=${duration} ${arguments['${i}']}"
+	
+	## TODO: This only makes sense on memory-constrained devices
+#	if [[ "${label}" == "measure" ]]; then
+#	    dbt="${dbt} --buffer-frac=25"
+#	fi;
+	
 	case "${scenario}" in
 	    fifo)
 		tsm="taskset --cpu-list ${taskset_meas}";
-		execstr="sudo chrt -f 99 linux/${MEASURE}${i} --log-count=${LOGCOUNT} >> ${OUTDIR}/${i}/latencies.txt";
+		execstr="sudo chrt -f 98 ${dbt} > ${OUTDIR}/${i}/latencies.txt";
 	    ;;
 	    shield)
 		sudo cset shield --cpu ${taskset_meas} --kthread=on;
 		tsm="";
-		execstr="sudo cset shield --exec -- linux/${MEASURE}${i} --log-count=${LOGCOUNT} | grep -v cset >> ${OUTDIR}/${i}/latencies.txt";
+		execstr="sudo cset shield --exec -- ${dbt} | grep -v cset > ${OUTDIR}/${i}/latencies.txt";
 	    ;;
 	    default)
 		tsm="taskset --cpu-list ${taskset_meas}"
-		execstr="linux/${MEASURE}${i} --log-count=${LOGCOUNT} >> ${OUTDIR}/${i}/latencies.txt";
+		execstr="${dbt} > ${OUTDIR}/${i}/latencies.txt";
 	    ;;
 	    *)
 	    	echo "Scenario ${scenario} is not known!"
@@ -68,10 +79,10 @@ for i in 1 6 12; do
         fi;
 
   ##      timeout ${duration} bash -c "while true; do eval \"${cmd}\"; done";
-	eval "timeout --signal=INT ${duration} ${cmd}";
+	eval "${cmd}";
         echo -n "finished (`date "+%H:%M:%S"`). Stressors: ";
 	if (( ${stress} > 0 )); then
-	    kill -s SIGINT ${PID}
+	    sudo kill -s SIGINT ${PID} > /dev/null 2>&1 # We need to send the signal as root because chrt and cset tasks run with root privileges
 	    wait ${PID};
 	fi;
 	echo "finished.";
