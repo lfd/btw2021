@@ -146,8 +146,8 @@ RUN cp /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/driver_sequential.cpp
 WORKDIR /home/build/dbtoaster-dist/dbtoaster/
 RUN sed -i 's,examples/data/tpch/,data/tpch/,g' examples/queries/tpch/schemas.sql
 RUN sed -i 's,examples/data/,data/,g' examples/queries/finance/*.sql
-ADD queries/countbids.sql examples/queries/financial/
-ADD queries/avgbrokerprice.sql examples/queries/financial/
+ADD queries/countbids.sql examples/queries/finance/
+ADD queries/avgbrokerprice.sql examples/queries/finance/
 
 ARG TPCH_BIN="1 2 6 12 14 11a 18a"
 ARG FINANCE_BIN="vwap axfinder pricespread brokerspread missedtrades brokervariance countbids avgbrokerprice"
@@ -194,7 +194,7 @@ done'
 
 
 # 12. Build Linux binaries for all TPCH and financial queries
-WORKDIR /home/build/dbtoaOBster
+WORKDIR /home/build/dbtoaster
 RUN mkdir -p linux/
 RUN /bin/bash -c 'for i in ${TPCH_BIN}; do \
   TPCH=${i} make measure; \
