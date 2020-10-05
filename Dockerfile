@@ -125,6 +125,7 @@ ADD app/*.cc app/wscript app/Makefile ./
 RUN mkdir -p rootfs/data generated
 
 # 9. Build the DBToaster backend (i.e., libdbtoaster.a)
+RUN echo "Hello, world"
 WORKDIR /home/build/src
 RUN git clone https://github.com/lfd/dbtoaster-backend.git
 WORKDIR /home/build/src/dbtoaster-backend
@@ -138,15 +139,19 @@ RUN ln -s /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/lib .
 # be copied into dbtoaster once they are in a mature state
 RUN cp /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/driver_sequential.cpp .
 
-# 9. Build DBToaster header files for relevant TPCH and financial queries
+# 9. Build DBToaster header files for relevant TPCH and finance queries
 # NOTE: We deliberately don't use -o Tpch<n>-V.hpp because then the class name
 # in the generated code is adapted from query to Tpch<n>-V, which is an
 # invalid C++ identifier
 WORKDIR /home/build/dbtoaster-dist/dbtoaster/
 RUN sed -i 's,examples/data/tpch/,data/tpch/,g' examples/queries/tpch/schemas.sql
 RUN sed -i 's,examples/data/,data/,g' examples/queries/finance/*.sql
+ADD queries/countbids.sql examples/queries/financial/
+ADD queries/avgbrokerprice.sql examples/queries/financial/
+
 ARG TPCH_BIN="1 2 6 12 14 11a 18a"
-ARG FINANCE_BIN="vwap axfinder pricespread brokerspread missedtrades"
+ARG FINANCE_BIN="vwap axfinder pricespread brokerspread missedtrades brokervariance countbids avgbrokerprice"
+
 RUN /bin/bash -c 'for i in ${TPCH_BIN}; do \
 	echo "Generating DBToaster code for TPCH query ${i}"; \
         bin/dbtoaster -l cpp examples/queries/tpch/query${i}.sql > $HOME/dbtoaster/generated/Tpch${i}-V.hpp; \
@@ -189,7 +194,7 @@ done'
 
 
 # 12. Build Linux binaries for all TPCH and financial queries
-WORKDIR /home/build/dbtoaster
+WORKDIR /home/build/dbtoaOBster
 RUN mkdir -p linux/
 RUN /bin/bash -c 'for i in ${TPCH_BIN}; do \
   TPCH=${i} make measure; \
@@ -206,9 +211,12 @@ RUN ln -s rootfs/data .
 ADD measure/dispatch.sh .
 ADD measure/caps.sh .
 ADD measure/rename.sh .
+ADD measure/lib.r .
+ADD measure/collect.r .
+ADD measure/gen_arguments.r .
 WORKDIR /home/build/dbtoaster/data/tpch
 ADD measure/caps.sh .
 RUN cp /home/build/src/tpch-dbgen/dbgen .
 RUN cp /home/build/src/tpch-dbgen/dists.dss .
 WORKDIR /home/build/dbtoaster
-RUN tar --transform 's,^,measure/,' -cjhf ~/measure.tar.bz2 *.sh linux/ data/
+RUN tar --transform 's,^,measure/,' -cjhf ~/measure.tar.bz2 *.r *.sh linux/ data/
