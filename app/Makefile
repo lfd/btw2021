@@ -10,9 +10,13 @@ FINANCE ?= vwap
 
 measure: libdbtoaster
 	$(CXX) $(CXXFLAGS) -include generated/Tpch$(TPCH)-V.hpp -o linux/tpch$(TPCH) driver_sequential.cpp -Ilib/ -O3 lib/libdbtoaster.a -lrt
+measure_tsc: libdbtoaster
+	$(CXX) $(CXXFLAGS) -DUSE_RDTSC -include generated/Tpch$(TPCH)-V.hpp -o linux/tpch$(TPCH)_tsc driver_sequential.cpp -Ilib/ -O3 lib/libdbtoaster.a -lrt
 
 finance: libdbtoaster
 	$(CXX) $(CXXFLAGS) -include generated/$(FINANCE).hpp -o linux/finance$(FINANCE) driver_sequential.cpp -Ilib/ -O3 lib/libdbtoaster.a -lrt
+finance_tsc: libdbtoaster
+	$(CXX) $(CXXFLAGS) -DUSE_RDTSC -include generated/$(FINANCE).hpp -o linux/finance$(FINANCE)_tsc driver_sequential.cpp -Ilib/ -O3 lib/libdbtoaster.a -lrt
 
 libdbtoaster:
 	$(MAKE) -C lib

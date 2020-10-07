@@ -52,7 +52,7 @@ def build(bld):
         includes = 'lib/ ./',
 	## NOTE: Passing cxxflags via an array, which is more appropriate, 
         ## leads to waf wrongly passing arguments to gcc
-        cxxflags = os.getenv('CXXFLAGS', '') + ' -g -O3 -include generated/Tpch' + os.getenv('TPCH', '1') + '-V.hpp',
+        cxxflags = os.getenv('CXXFLAGS', '') + ' -g -O3 -include generated/' + os.getenv('QUERY', 'Tpch1-V') + '.hpp',
         source   = 'driver_sequential.cpp')
 
 

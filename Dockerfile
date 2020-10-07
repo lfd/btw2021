@@ -125,7 +125,6 @@ ADD app/*.cc app/wscript app/Makefile ./
 RUN mkdir -p rootfs/data generated
 
 # 9. Build the DBToaster backend (i.e., libdbtoaster.a)
-RUN echo "Hello, world"
 WORKDIR /home/build/src
 RUN git clone https://github.com/lfd/dbtoaster-backend.git
 WORKDIR /home/build/src/dbtoaster-backend
@@ -147,10 +146,11 @@ WORKDIR /home/build/dbtoaster-dist/dbtoaster/
 RUN sed -i 's,examples/data/tpch/,data/tpch/,g' examples/queries/tpch/schemas.sql
 RUN sed -i 's,examples/data/,data/,g' examples/queries/finance/*.sql
 ADD queries/countbids.sql examples/queries/finance/
+ADD queries/countone.sql examples/queries/finance/
 ADD queries/avgbrokerprice.sql examples/queries/finance/
 
 ARG TPCH_BIN="1 2 6 12 14 11a 18a"
-ARG FINANCE_BIN="vwap axfinder pricespread brokerspread missedtrades brokervariance countbids avgbrokerprice"
+ARG FINANCE_BIN="vwap axfinder pricespread brokerspread missedtrades brokervariance countbids countone avgbrokerprice"
 
 RUN /bin/bash -c 'for i in ${TPCH_BIN}; do \
 	echo "Generating DBToaster code for TPCH query ${i}"; \
@@ -188,8 +188,14 @@ RUN rm lib/libdbtoaster.a  # The distribution provided binary is for x86_64-linu
 RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=i386/pc586
 RUN /bin/bash -c 'for i in ${TPCH_BIN}; do \
   rm -f build/i386-rtems5-pc586/{StreamDriver,driver_sequential}.*.{o,d}; \
-  CXXFLAGS=-DUSE_RDTSC TPCH=${i} ./waf build; \
-  mv build/i386-rtems5-pc586/dbtoaster.exe rtems/dbtoaster${i}.exe; \
+  CXXFLAGS=-DUSE_RDTSC QUERY=Tpch${i}-V ./waf build; \
+  mv build/i386-rtems5-pc586/dbtoaster.exe rtems/tpch${i}.exe; \
+done'
+
+RUN /bin/bash -c 'for i in ${FINANCE_BIN}; do \
+  rm -f build/i386-rtems5-pc586/{StreamDriver,driver_sequential}.*.{o,d}; \
+  CXXFLAGS=-DUSE_RDTSC QUERY=${i} ./waf build; \
+  mv build/i386-rtems5-pc586/dbtoaster.exe rtems/finance${i}.exe; \
 done'
 
 
@@ -203,6 +209,21 @@ done'
 RUN /bin/bash -c 'for Q in ${FINANCE_BIN}; do \
   FINANCE=${Q} make finance; \
 done'
+
+## 12.b Build Linux binaries with TSC based measurements
+WORKDIR /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/lib
+RUN make clean
+RUN CXXFLAGS="-DUSE_RDTSC" make -j
+WORKDIR /home/build/dbtoaster
+RUN mkdir -p linux/
+RUN /bin/bash -c 'for i in ${TPCH_BIN}; do \
+  TPCH=${i} make measure_tsc; \
+done'
+
+RUN /bin/bash -c 'for Q in ${FINANCE_BIN}; do \
+  FINANCE=${Q} make finance_tsc; \
+done'
+
 
 # 13. Generate self-contained measurement package that can
 # be deployed on Linux x86_64 targets

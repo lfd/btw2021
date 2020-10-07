@@ -25,7 +25,6 @@ LOGCOUNT=1
 ##cat stressors | grep "^[^#;]" | sed -e "s/\$/ $threads/" >> $stressjob
 
 OUTDIR="res_duration-${duration}_stress-${stress}_scenario-${scenario}_${label}/"
-rm -rf ${OUTDIR}
 
 if [ -f "arguments.sh" ]; then
     . arguments.sh
@@ -48,6 +47,7 @@ esac;
 
 for i in ${queries}; do
     echo -n "Executing query ${dataset}${i} (`date "+%H:%M:%S"`): ";
+    rm -rf ${OUTDIR}/${i};
     mkdir -p ${OUTDIR}/${i};
     dbt="linux/${dataset}${i} --log-count=${LOGCOUNT} --no-output --timeout=${duration} ${arguments['${i}']}"
 	
@@ -63,7 +63,12 @@ for i in ${queries}; do
 	shield)
 	    sudo cset shield --cpu ${taskset_meas} --kthread=on;
 	    tsm="";
-	    execstr="sudo cset shield --exec -- ${dbt} | grep -v cset > ${OUTDIR}/${i}/latencies.txt";
+	    execstr="sudo cset shield --exec -- ${dbt} 2>&1 | grep -v cset > ${OUTDIR}/${i}/latencies.txt";
+	    ;;
+	shield+fifo)
+	    sudo cset shield --cpu ${taskset_meas} --kthread=on;
+	    tsm="";
+	    execstr="sudo cset shield --exec -- sudo chrt -f 98 ${dbt} 2>&1 | grep -v cset > ${OUTDIR}/${i}/latencies.txt";
 	    ;;
 	default)
 	    tsm="taskset --cpu-list ${taskset_meas}"
@@ -100,7 +105,7 @@ for i in ${queries}; do
     echo "finished.";
     
     case ${scenario} in
-	shield)
+	shield|shield+fifo)
 	    sudo cset shield -r
 	    ;;
 	*)
