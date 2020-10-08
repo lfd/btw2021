@@ -59,48 +59,52 @@ RUN curl https://waf.io/waf-2.0.19 > waf
 RUN git clone git://git.rtems.org/rtems_waf.git rtems_waf
 RUN chmod +x waf
 
-
 # 1. Obtain RTEMS source builder and kernel sources
 WORKDIR /home/build/src
-RUN curl https://ftp.rtems.org/pub/rtems/releases/5/5.1/sources/rtems-source-builder-5.1.tar.xz | tar xJf -
-RUN curl https://ftp.rtems.org/pub/rtems/releases/5/5.1/sources/rtems-5.1.tar.xz | tar xJf -
-RUN mv rtems-source-builder-5.1 rsb
+RUN git clone https://github.com/RTEMS/rtems-source-builder.git
 
-# ... and patch up some things
-WORKDIR /home/build/src/rtems-5.1
-ADD patches/rtems.diff  /home/build/src
-RUN cat ../rtems.diff | patch -p1
-
-WORKDIR /home/build/src/rsb
-ADD patches/rsb.diff /home/build/src
-RUN cat ../rsb.diff | patch -p1
-
+ADD patches/rsb-10.diff /home/build/src
+WORKDIR /home/build/src/rtems-source-builder/rtems
+RUN git apply /home/build/src/rsb-10.diff
 
 # 2. Check environment
-WORKDIR /home/build/src/rsb/rtems
 RUN ../source-builder/sb-check
 
-
 # 3. Build toolchains for i386 and ARM
-WORKDIR /home/build/src/rsb/rtems
-RUN ../source-builder/sb-set-builder --prefix=$HOME/rtems/5 5/rtems-i386
-RUN ../source-builder/sb-set-builder --prefix=$HOME/rtems/5 5/rtems-arm
-
+RUN ../source-builder/sb-set-builder --prefix=$HOME/rtems/6 6/rtems-i386
+RUN ../source-builder/sb-set-builder --prefix=$HOME/rtems/6 6/rtems-arm
 
 # 4. Make toolchain binaries available via PATH
-ENV PATH /home/build/rtems/5/bin:$PATH
+ENV PATH /home/build/rtems/6/bin:$PATH
 
+# 5. Clone and build for virtual and real measurement systems
+RUN git clone https://github.com/lfd/rtems.git $HOME/src/rtems-default
+RUN git -C $HOME/src/rtems-default checkout 5dc65ef9f435
+RUN cp -av $HOME/src/rtems-default $HOME/src/rtems-jailhouse
+RUN git -C $HOME/src/rtems-jailhouse checkout dbtoaster
 
-# 5. Build rtems BSPs for virtual and real measurement systems
+# 6. bootstrap RTEMS BSP
+WORKDIR /home/build/src/rtems-default
+RUN ./bootstrap -c
+RUN ./rtems-bootstrap
+WORKDIR /home/build/src/rtems-jailhouse
+RUN ./bootstrap -c
+RUN ./rtems-bootstrap
+
+# 7. Build RTEMS Default BSP
 WORKDIR /home/build/build
-RUN $HOME/src/rtems-5.1/configure --prefix=$HOME/rtems/5 --target=i386-rtems5 --enable-rtemsbsp=pc586 --enable-posix --disable-networking --enable-rtems-debug
-RUN make -j && make install
+
+RUN $HOME/src/rtems-default/configure --prefix=$HOME/rtems/6-default --target=i386-rtems6 --enable-rtemsbsp=pc686 --enable-posix --disable-networking --enable-rtems-debug
+RUN make -j 20 && make install
 RUN rm -rf /home/build/build/*
 
-RUN $HOME/src/rtems-5.1/configure --prefix=$HOME/rtems/5 --target=arm-rtems5 --enable-rtemsbsp="realview_pbx_a9_qemu beagleboneblack" --enable-posix --disable-networking --enable-rtems-debug
-RUN make -j  && make install
+RUN $HOME/src/rtems-jailhouse/configure --prefix=$HOME/rtems/6-jailhouse --target=i386-rtems6 --enable-rtemsbsp=pc686 --enable-posix --disable-networking --enable-rtems-debug BSP_ENABLE_IDE=0 BSP_ENABLE_VGA=0 USE_COM1_AS_CONSOLE=1 BSP_GET_WORK_AREA_DEBUG=1
+RUN make -j 20 && make install
 RUN rm -rf /home/build/build/*
 
+RUN $HOME/src/rtems-default/configure --prefix=$HOME/rtems/6-arm --target=arm-rtems6 --enable-rtemsbsp="realview_pbx_a9_qemu beagleboneblack" --enable-posix --disable-networking --enable-rtems-debug
+RUN make -j 20  && make install
+RUN rm -rf /home/build/build/*
 
 # 6. Install DBToaster
 WORKDIR /home/build/dbtoaster-dist
@@ -124,11 +128,13 @@ WORKDIR /home/build/dbtoaster
 ADD app/*.cc app/wscript app/Makefile ./
 RUN mkdir -p rootfs/data generated
 
+
 # 9. Build the DBToaster backend (i.e., libdbtoaster.a)
 WORKDIR /home/build/src
 RUN git clone https://github.com/lfd/dbtoaster-backend.git
 WORKDIR /home/build/src/dbtoaster-backend
-RUN git checkout btw2021
+#RUN git checkout btw2021 FIXME!
+RUN git checkout bb3e0dd00bb4650b8dba9b
 WORKDIR /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/lib
 RUN make -j
 
@@ -161,8 +167,6 @@ RUN /bin/bash -c 'for Q in ${FINANCE_BIN}; do \
         bin/dbtoaster -l cpp examples/queries/finance/${Q}.sql > $HOME/dbtoaster/generated/${Q}.hpp; \
 done'
 
-
-
 # 10. Build TPCH example data, and copy finance data
 # (we delibertely only build a very small data set for
 # to "smoke test" if compiled binaries work properly)
@@ -183,21 +187,39 @@ RUN curl https://raw.githubusercontent.com/dbtoaster/dbtoaster-experiments-data/
 # 11. Build the DBToaster RTEMS app for x86 and all TPCH queries, using
 # the TSC for time measurements
 WORKDIR /home/build/dbtoaster
-RUN mkdir -p rtems
+RUN mkdir -p rtems-default rtems-jailhouse
 RUN rm lib/libdbtoaster.a  # The distribution provided binary is for x86_64-linux
-RUN ./waf configure --rtems=$HOME/rtems/5 --rtems-bsp=i386/pc586
+
+# Configure and build for 6-default
+RUN ./waf configure --rtems=$HOME/rtems/6-default --rtems-tools=$HOME/rtems/6 --rtems-bsp=i386/pc686
+
 RUN /bin/bash -c 'for i in ${TPCH_BIN}; do \
-  rm -f build/i386-rtems5-pc586/{StreamDriver,driver_sequential}.*.{o,d}; \
+  rm -f build/i386-rtems6-pc686/{StreamDriver,driver_sequential}.*.{o,d}; \
   CXXFLAGS=-DUSE_RDTSC QUERY=Tpch${i}-V ./waf build; \
-  mv build/i386-rtems5-pc586/dbtoaster.exe rtems/tpch${i}.exe; \
+  mv build/i386-rtems6-pc686/dbtoaster.exe rtems-default/tpch${i}.exe; \
 done'
 
 RUN /bin/bash -c 'for i in ${FINANCE_BIN}; do \
-  rm -f build/i386-rtems5-pc586/{StreamDriver,driver_sequential}.*.{o,d}; \
+  rm -f build/i386-rtems6-pc686/{StreamDriver,driver_sequential}.*.{o,d}; \
   CXXFLAGS=-DUSE_RDTSC QUERY=${i} ./waf build; \
-  mv build/i386-rtems5-pc586/dbtoaster.exe rtems/finance${i}.exe; \
+  mv build/i386-rtems6-pc686/dbtoaster.exe rtems-default/finance${i}.exe; \
+done'
+RUN ./waf clean
+
+# Configure and build for 6-jailhouse
+RUN ./waf configure --rtems=$HOME/rtems/6-jailhouse --rtems-tools=$HOME/rtems/6 --rtems-bsp=i386/pc686
+RUN /bin/bash -c 'for i in ${TPCH_BIN}; do \
+  rm -f build/i386-rtems6-pc686/{StreamDriver,driver_sequential}.*.{o,d}; \
+  CXXFLAGS=-DUSE_RDTSC QUERY=Tpch${i}-V ./waf build; \
+  mv build/i386-rtems6-pc686/dbtoaster.exe rtems-jailhouse/tpch${i}.exe; \
 done'
 
+RUN /bin/bash -c 'for i in ${FINANCE_BIN}; do \
+  rm -f build/i386-rtems6-pc686/{StreamDriver,driver_sequential}.*.{o,d}; \
+  CXXFLAGS=-DUSE_RDTSC QUERY=${i} ./waf build; \
+  mv build/i386-rtems6-pc686/dbtoaster.exe rtems-jailhouse/finance${i}.exe; \
+done'
+RUN ./waf clean
 
 # 12. Build Linux binaries for all TPCH and financial queries
 WORKDIR /home/build/dbtoaster

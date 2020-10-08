@@ -1,0 +1,23 @@
+diff --git a/libstdc++-v3/include/ext/atomicity.h b/libstdc++-v3/include/ext/atomicity.h
+index 813ceb0bbf8..f6089e18cdb 100644
+--- a/libstdc++-v3/include/ext/atomicity.h
++++ b/libstdc++-v3/include/ext/atomicity.h
+@@ -47,12 +47,16 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
+   inline _Atomic_word
+   __attribute__((__always_inline__))
+   __exchange_and_add(volatile _Atomic_word* __mem, int __val)
+-  { return __atomic_fetch_add(__mem, __val, __ATOMIC_ACQ_REL); }
++  {
++    _Atomic_word __result = *__mem;
++    *__mem += __val;
++    return __result;
++  }
+ 
+   inline void
+   __attribute__((__always_inline__))
+   __atomic_add(volatile _Atomic_word* __mem, int __val)
+-  { __atomic_fetch_add(__mem, __val, __ATOMIC_ACQ_REL); }
++  { *__mem += __val; }
+ #else
+   _Atomic_word
+   __exchange_and_add(volatile _Atomic_word*, int) _GLIBCXX_NOTHROW;

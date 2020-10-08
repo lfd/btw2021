@@ -1,0 +1,14 @@
+diff --git a/rtems/config/tools/rtems-gcc-10-newlib-head.cfg b/rtems/config/tools/rtems-gcc-10-newlib-head.cfg
+index eb1cf72..9a72c63 100644
+--- a/rtems/config/tools/rtems-gcc-10-newlib-head.cfg
++++ b/rtems/config/tools/rtems-gcc-10-newlib-head.cfg
+@@ -1,6 +1,9 @@
+ %include %{_configdir}/checks.cfg
+ %include %{_configdir}/base.cfg
+ 
++%patch add gcc -p1 https://vmexit.de/~ralf/gcc-10.diff
++%hash sha512 gcc-10.diff 06f273a0beb55bd2f71e18261d4f0ac9705bff6a6cd3ffc108b361d01c44837ca1739f8eaaab5769a35c4507a61daba7948ae3e1eb36b4b02c5772b35b0beb7e
++
+ %define gcc_version 949e0ad
+ %define gcc_external 1
+ %define gcc_expand_name gnu-mirror-gcc-%{gcc_version}

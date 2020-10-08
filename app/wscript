@@ -1,7 +1,7 @@
 from __future__ import print_function
 import os
 
-rtems_version = "5"
+rtems_version = "6"
 
 try:
     import rtems_waf.rtems as rtems
