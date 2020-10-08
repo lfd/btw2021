@@ -16,12 +16,17 @@ extern const size_t fs_root_tar_size;
 
 extern int main(int argc, char **argv);
 
-// TODO: Size this properly depending on the actual amount of data
+
+#define RAMDISK_SIZE_MB	48
+#define RAMDISK_BLOCK_BSIZE 512
+
+#define RAMDISK_BLOCK_NUM (RAMDISK_SIZE_MB * 1024 * 1024 / RAMDISK_BLOCK_BSIZE)
+
 rtems_ramdisk_config rtems_ramdisk_configuration[] =
 {
   {
-    .block_size = 512,
-    .block_num = 80*1024*1024
+    .block_size = RAMDISK_BLOCK_BSIZE,
+    .block_num = RAMDISK_BLOCK_NUM,
   }
 };
 
