@@ -55,9 +55,15 @@ WORKDIR /home/build
 RUN mkdir -p $HOME/src $HOME/dbtoaster $HOME/rtems $HOME/build $HOME/dbtoaster-dist
 WORKDIR /home/build/dbtoaster
 RUN curl https://waf.io/waf-2.0.19 > waf
+RUN chmod +x waf
+
 # TODO: Checkout a defined version here
 RUN git clone git://git.rtems.org/rtems_waf.git rtems_waf
-RUN chmod +x waf
+# Relocation to 0x200000: patch rtems-waf:
+ADD patches/rtems-waf.diff /home/build/src/
+WORKDIR /home/build/dbtoaster/rtems_waf
+RUN git apply /home/build/src/rtems-waf.diff
+
 
 # 1. Obtain RTEMS source builder and kernel sources
 WORKDIR /home/build/src

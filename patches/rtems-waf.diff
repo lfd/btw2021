@@ -1,0 +1,13 @@
+diff --git a/rtems.py b/rtems.py
+index 7ee3653..952dae6 100644
+--- a/rtems.py
++++ b/rtems.py
+@@ -384,7 +384,7 @@ def tweaks(conf, arch_bsp):
+     # Check for a i386 PC bsp.
+     #
+     if re.match('i386-.*-pc[3456]86', arch_bsp) is not None:
+-        conf.env.LINKFLAGS += ['-Wl,-Ttext,0x00100000']
++        conf.env.LINKFLAGS += ['-Wl,-Ttext,0x00200000']
+ 
+     if '-ffunction-sections' in conf.env.CFLAGS:
+       conf.env.LINKFLAGS += ['-Wl,--gc-sections']
