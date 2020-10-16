@@ -54,9 +54,10 @@ rtems_task Init(
    // Dispatch somewhat clumsily via main routine so that
    // we use identical core measurement code on Linux and RTEMS
    char *argv[] = { const_cast<char*>("dbtoaster"),
-                    const_cast<char*>("--log-count=1")
+                    const_cast<char*>("--log-count=1"),
+                    const_cast<char*>("--iterations=1000"),
                    } ;
-   main(2, argv);
+   main(3, argv);
 
    cout << "DBToaster finished" << endl;
 
