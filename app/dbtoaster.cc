@@ -17,7 +17,7 @@ extern const size_t fs_root_tar_size;
 extern int main(int argc, char **argv);
 
 
-#define RAMDISK_SIZE_MB	48
+#define RAMDISK_SIZE_MB	72
 #define RAMDISK_BLOCK_BSIZE 512
 
 #define RAMDISK_BLOCK_NUM (RAMDISK_SIZE_MB * 1024 * 1024 / RAMDISK_BLOCK_BSIZE)
