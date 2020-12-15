@@ -139,8 +139,7 @@ RUN mkdir -p rootfs/data generated
 WORKDIR /home/build/src
 RUN git clone https://github.com/lfd/dbtoaster-backend.git
 WORKDIR /home/build/src/dbtoaster-backend
-#RUN git checkout btw2021 FIXME!
-RUN git checkout bb3e0dd00bb4650b8dba9b
+RUN git checkout btw2021
 WORKDIR /home/build/src/dbtoaster-backend/ddbtoaster/srccpp/lib
 RUN make -j
 
