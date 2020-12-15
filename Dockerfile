@@ -189,6 +189,9 @@ RUN /bin/bash -c 'for file in *.tbl; do \
 done'
 RUN curl https://raw.githubusercontent.com/dbtoaster/dbtoaster-experiments-data/master/finance/standard/finance.csv > /home/build/dbtoaster/rootfs/data/finance.csv
 
+# ONLY FOR COUNTONE!
+RUN /bin/bash -c 'for i in $(seq 0 95); do cat /home/build/dbtoaster/rootfs/data/finance.csv >> /tmp/foo.dat; done'
+RUN mv /tmp/foo.dat /home/build/dbtoaster/rootfs/data/finance.csv
 
 # 11. Build the DBToaster RTEMS app for x86 and all TPCH queries, using
 # the TSC for time measurements
