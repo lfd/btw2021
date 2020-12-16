@@ -68,6 +68,7 @@ RUN git apply /home/build/src/rtems-waf.diff
 # 1. Obtain RTEMS source builder and kernel sources
 WORKDIR /home/build/src
 RUN git clone https://github.com/RTEMS/rtems-source-builder.git
+RUN git -C rtems-source-builder checkout ed5030bc24dbfdfac52074ed78cf4231bf1f353d
 
 ADD patches/rsb-10.diff /home/build/src
 WORKDIR /home/build/src/rtems-source-builder/rtems
