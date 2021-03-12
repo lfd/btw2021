@@ -1,0 +1,359 @@
+From cf42a7e2d338be5cb8ca67ebd4d5ef0e969e5680 Mon Sep 17 00:00:00 2001
+From: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Date: Thu, 15 Oct 2020 00:16:20 +0200
+Subject: [PATCH 10/12] Implement latency measurement boundaries
+
+When measuring over extended periods of time, it is neither
+useful nor possible (memory consumption) to log every single
+latency value. Since usually only outliers are of interest,
+allow for specifying an upper and lower latency bound
+on the command line above/below which latencies are recorded,
+and discard all "normal" values in between.
+
+Also add a command line option buffer-frac to limit the size
+of the log buffer (which is otherwise allocated with a capabity
+for the worst possible case of measured latency values)
+to a certain fraction of the default size.
+
+Signed-off-by: Wolfgang Mauerer <wolfgang.mauerer@othr.de>
+Reviewed-by: Stefanie Scherzinger <stefanie.scherzinger@uni-passau.de>
+---
+ ddbtoaster/srccpp/lib/iprogram.cpp     | 44 +++++++---------------------------
+ ddbtoaster/srccpp/lib/iprogram.hpp     | 42 ++++++++++++++++++++++++++++----
+ ddbtoaster/srccpp/lib/program_base.cpp | 13 +++++++++-
+ ddbtoaster/srccpp/lib/program_base.hpp |  4 +++-
+ ddbtoaster/srccpp/lib/runtime.cpp      | 16 ++++++++++++-
+ ddbtoaster/srccpp/lib/runtime.hpp      | 18 ++++++++++++--
+ 6 files changed, 92 insertions(+), 45 deletions(-)
+
+diff --git a/ddbtoaster/srccpp/lib/iprogram.cpp b/ddbtoaster/srccpp/lib/iprogram.cpp
+index 75228d6..680361c 100644
+--- a/ddbtoaster/srccpp/lib/iprogram.cpp
++++ b/ddbtoaster/srccpp/lib/iprogram.cpp
+@@ -1,3 +1,4 @@
++/* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
+ #include "iprogram.hpp"
+ #include "event.hpp"
+ #include <iostream>
+@@ -144,50 +145,23 @@ IProgram::snapshot_t IProgram::wait_for_snapshot()
+ 	return result;
+ }
+ 
+-void IProgram::log_timestamp(tstamp_t val) {
+-	log_buffer[log_idx++] = val;
++ void IProgram::log_timestamp(tstamp_t val, unsigned long diff, unsigned int tuple_count) {
++	 log_buffer[log_idx++] =  std::make_tuple(val, diff, tuple_count);
+ }
+ 
+-#ifdef USE_RDTSC
+-tstamp_t diff(tstamp_t start, tstamp_t end)  {
+-    tstamp_t diff = end - start;
+-    return diff;
+-}
+-#else
+-tstamp_t diff(tstamp_t start, tstamp_t end)  {
+-    tstamp_t temp;
+-    if ((end.tv_nsec-start.tv_nsec) < 0) {
+-      temp.tv_sec = end.tv_sec-start.tv_sec-1;
+-      temp.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
+-    } else {
+-      temp.tv_sec = end.tv_sec-start.tv_sec;
+-      temp.tv_nsec = end.tv_nsec-start.tv_nsec;
+-    }
+-    return temp;
+-}
+-#endif
+ 
+ void IProgram::print_log_buffer() {
+-  tstamp_t start, diff1, diff2;
+-
+-	if (log_buffer.size() < 2) {
++	if (log_buffer.size() == 0) {
+ 		cerr << "Log buffer is empty. Did you forget to set --log-count?" << endl;
+ 		return;
+ 	}
+ 
+-	start = log_buffer[0];
+-	for (size_t i=1; i < log_idx; i++)  {
+-		diff1 = diff(log_buffer[0], log_buffer[i]);
+-		diff2 = diff(start, log_buffer[i]);
+-
+-#ifdef USE_RDTSC
+-		std::cout << diff1 << "\t" << diff2 << std::endl;
+-#else
+-		std::cout << (long)(diff1.tv_sec * 1e9 + diff1.tv_nsec) << "\t" <<
+-		  (long)(diff2.tv_sec * 1e9 + diff2.tv_nsec) << std::endl;
+-#endif
++	// The first log buffer delta is based on a dummy zero time base, and can be ignored
++	tstamp_t initial = get<0>(log_buffer[1]);
+ 
+-		start = log_buffer[i];
++	for (size_t i=1; i < log_idx; i++)  {
++		log_t val = log_buffer[i];
++		cout << get<2>(val) << "\t" << diff(initial, get<0>(val)) << "\t" << get<1>(val) << std::endl;
+ 	}
+ 
+ 	log_buffer.clear();
+diff --git a/ddbtoaster/srccpp/lib/iprogram.hpp b/ddbtoaster/srccpp/lib/iprogram.hpp
+index 135eba9..d7841e3 100644
+--- a/ddbtoaster/srccpp/lib/iprogram.hpp
++++ b/ddbtoaster/srccpp/lib/iprogram.hpp
+@@ -17,6 +17,7 @@
+ #include <cstdint>
+ #include <string>
+ #include <vector>
++#include <tuple>
+ #include <time.h>
+ #include <sys/time.h>
+ #include "serialization.hpp"
+@@ -33,6 +34,35 @@ struct tlq_t;
+ #else
+   typedef struct timespec tstamp_t;
+ #endif
++  typedef tuple<tstamp_t, unsigned long, unsigned int> log_t;
++
++
++// diff returns a difference between two tstampt_s in the best possible resolution
++// (defined as non-class methods to ensure they can be inlined)
++#ifdef USE_RDTSC
++  static inline unsigned long diff(tstamp_t start, tstamp_t end)  {
++    tstamp_t diff = end - start;
++    return static_cast<unsigned long>(diff);
++  }
++#else
++#define NSEC_PER_SEC 1000000000
++  static inline unsigned long diff(tstamp_t start, tstamp_t end)  {
++    tstamp_t temp;
++    if ((end.tv_nsec-start.tv_nsec) < 0) {
++      temp.tv_sec = end.tv_sec-start.tv_sec-1;
++      temp.tv_nsec = NSEC_PER_SEC+end.tv_nsec-start.tv_nsec;
++    } else {
++      temp.tv_sec = end.tv_sec-start.tv_sec;
++      temp.tv_nsec = end.tv_nsec-start.tv_nsec;
++    }
++
++    if (temp.tv_sec != 0) {
++		return(static_cast<unsigned long>(temp.tv_sec*NSEC_PER_SEC + temp.tv_nsec));
++    }
++
++    return (static_cast<unsigned long>(temp.tv_nsec));
++}
++#endif
+ 
+ /**
+  * IProgram is the base class for executing sql programs. It provides
+@@ -48,12 +78,13 @@ public:
+     typedef std::shared_ptr<tlq_t> snapshot_t;
+ 
+     IProgram() :
+-        running(false)
++	buffer_frac(100)
++        , running(false)
+         , finished(false)
+         , snapshot_ready(true)
+         , snapshot_request(false)
+ 	, log_idx(0)
+-    {}
++  {}
+     virtual ~IProgram() {
+     }
+ 
+@@ -97,7 +128,7 @@ public:
+      * Resize the log buffer to avoid allocations during latency measurements
+      */
+     void resize_log_buffer(size_t size) {
+-        log_buffer.resize(size);
++        log_buffer.resize(ceil(buffer_frac*size/100));
+     };
+ 
+ protected:
+@@ -164,7 +195,8 @@ protected:
+     /**
+      * Log a timestamp after after completing a tuple processing batch
+      */
+-    void log_timestamp(tstamp_t val);
++  void log_timestamp(tstamp_t val, unsigned long diff, unsigned int tuple_count);
++  int buffer_frac;
+ 
+ private:
+     bool running;
+@@ -177,7 +209,7 @@ private:
+ 
+     bool snapshot_request;
+     snapshot_t snapshot;
+-    std::vector<tstamp_t> log_buffer;
++    std::vector<log_t> log_buffer;
+     size_t log_idx;
+ };
+ }
+diff --git a/ddbtoaster/srccpp/lib/program_base.cpp b/ddbtoaster/srccpp/lib/program_base.cpp
+index 320eaaf..e471b19 100644
+--- a/ddbtoaster/srccpp/lib/program_base.cpp
++++ b/ddbtoaster/srccpp/lib/program_base.cpp
+@@ -1,3 +1,4 @@
++/* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
+ #include "program_base.hpp"
+ #include <iomanip>
+ 
+@@ -201,6 +202,8 @@ ProgramBase::ProgramBase(int argc, char* argv[]) :
+ 	, next_relation_id(0)
+ 	, tuple_count(0)
+ 	, log_count_every(run_opts->log_tuple_count_every)
++    , highlat_count(0)
++	, prev_tstamp((tstamp_t) { 0 })
+ #ifdef DBT_PROFILE
+ 	, window_size( run_opts->get_stats_window_size() )
+ 	, stats_period( run_opts->get_stats_period() )
+@@ -213,6 +216,7 @@ ProgramBase::ProgramBase(int argc, char* argv[]) :
+ 									   stats_period, stats_file))
+ #endif // DBT_PROFILE
+ {
++	buffer_frac = run_opts->buffer_frac;
+ }
+ 
+ void ProgramBase::process_streams() {
+@@ -305,7 +309,14 @@ void ProgramBase::process_stream_event(const event_t& _evt) {
+ 
+ 	// buffer output and only print after execution
+ 	if (log_count_every && (tuple_count % log_count_every == 0)) {
+-		log_timestamp(get_tstamp());
++			tstamp_t tstamp = get_tstamp();
++			unsigned long tdiff = diff(prev_tstamp, tstamp);
++
++			if (tdiff <= run_opts->lower_lat || tdiff >= run_opts->upper_lat) {
++				log_timestamp(tstamp, tdiff, tuple_count);
++			}
++
++			prev_tstamp = tstamp;
+ 	}
+ 	tuple_count += 1;
+ 
+diff --git a/ddbtoaster/srccpp/lib/program_base.hpp b/ddbtoaster/srccpp/lib/program_base.hpp
+index 0badf93..a5fc252 100644
+--- a/ddbtoaster/srccpp/lib/program_base.hpp
++++ b/ddbtoaster/srccpp/lib/program_base.hpp
+@@ -199,6 +199,8 @@ protected:
+     unsigned int log_count_every;
+ 
+ private:
++    unsigned int highlat_count;
++    tstamp_t prev_tstamp;
+ #ifdef USE_RDTSC
+     static inline void lfence(void) {
+        asm volatile("lfence" ::: "memory");
+@@ -206,7 +208,7 @@ private:
+ 
+     inline tstamp_t get_tstamp(void) {
+       // Since rdtscp is only supported from Core i7 onwards,
+-      // we use rdtsc, and ensure it's serialised by a pre/post mfence
++      // we use rdtsc, and ensure it's serialised by a pre/post lfence
+ 
+       lfence();
+       tstamp_t val = __rdtsc();
+diff --git a/ddbtoaster/srccpp/lib/runtime.cpp b/ddbtoaster/srccpp/lib/runtime.cpp
+index 4b2c83e..b94da10 100644
+--- a/ddbtoaster/srccpp/lib/runtime.cpp
++++ b/ddbtoaster/srccpp/lib/runtime.cpp
+@@ -2,10 +2,12 @@
+ 
+ #include <stdio.h>
+ #include <stdlib.h>
++
+ #include "filepath.hpp"
+ #include <algorithm>
+ #include <string>
+ #include <sstream>
++#include <climits>
+ 
+ /******************************************************************************
+ 	runtime_options
+@@ -32,6 +34,9 @@ runtime_options::runtime_options(int argc, char* argv[]) :
+   , trace_step(0)
+   , log_tuple_count_every(0)
+   , iterations(1)
++  , lower_lat(LONG_MAX)
++  , upper_lat(0)
++  , buffer_frac(100)
+   , async(false)
+   , batch_size(0)
+   , parallel(MIX_INPUT_TUPLES)
+@@ -114,9 +119,18 @@ void runtime_options::process_options(int argc, char* argv[])
+ 			case LOGCOUNT:
+ 				log_tuple_count_every = std::atoi(opt.arg);
+ 				break;
+-			case ITERATIONS:
++			case BUFFER_FRAC:
++				buffer_frac = std::atoi(opt.arg);
++				break;
++		        case ITERATIONS:
+ 				iterations = std::atoi(opt.arg);
+ 				break;
++			case LOWERLAT:
++				lower_lat = std::atoi(opt.arg);
++				break;
++			case UPPERLAT:
++				upper_lat = std::atoi(opt.arg);
++				break;
+ 		        case BATCH_SIZE:
+ 				batch_size = std::atoi(opt.arg);
+ 				break;
+diff --git a/ddbtoaster/srccpp/lib/runtime.hpp b/ddbtoaster/srccpp/lib/runtime.hpp
+index ce4cff5..6287ff2 100644
+--- a/ddbtoaster/srccpp/lib/runtime.hpp
++++ b/ddbtoaster/srccpp/lib/runtime.hpp
+@@ -67,7 +67,8 @@ namespace dbtoaster {
+       }
+     };
+ 
+-    enum  optionIndex { UNKNOWN, HELP, VERBOSE, ASYNC, LOGDIR, LOGTRIG, UNIFIED, OUTFILE, BATCH_SIZE, PARALLEL_INPUT, NO_OUTPUT, SAMPLESZ, SAMPLEPRD, STATSFILE, TRACE, TRACEDIR, TRACESTEP, LOGCOUNT, ITERATIONS };
++    enum  optionIndex { UNKNOWN, HELP, VERBOSE, ASYNC, LOGDIR, LOGTRIG, UNIFIED, OUTFILE, BATCH_SIZE, PARALLEL_INPUT, NO_OUTPUT, TIMEOUT, SAMPLESZ, SAMPLEPRD, STATSFILE, TRACE, TRACEDIR, TRACESTEP, LOGCOUNT, BUFFER_FRAC, ITERATIONS, LOWERLAT, UPPERLAT };
++
+     const option::Descriptor usage[] = {
+     { UNKNOWN,       0,"", "",           Arg::Unknown, "dbtoaster query options:" },
+     { HELP,          0,"h","help",       Arg::None,    "  -h       , \t--help  \tlist available options." },
+@@ -80,6 +81,8 @@ namespace dbtoaster {
+     { BATCH_SIZE,    0,"b","batch-size", Arg::Required,"  -b  <arg>, \t--batch-size  \texecute as batches of certain size." },
+     { PARALLEL_INPUT,0,"p","par-stream", Arg::Required,"  -p  <arg>, \t--par-stream  \tparallel streams (0=off, 2=deterministic)" },
+     { NO_OUTPUT     ,0,"n","no-output",  Arg::None,    "  -n       , \t--no-output  \tdo not print the output result in the standard output" },
++    { TIMEOUT       ,0,"","timeout",    Arg::Numeric,   "  \t--timeout=<arg>  \tstop measurement after [arg] seconds" },
++
+     // Statistics profiling parameters
+     { SAMPLESZ, 0,"","samplesize",  Arg::Numeric, "  \t--samplesize=<arg>  \tsample window size for trigger profiles." },
+     { SAMPLEPRD,0,"","sampleperiod",Arg::Numeric, "  \t--sampleperiod=<arg>  \tperiod length, as number of trigger events." },
+@@ -90,6 +93,14 @@ namespace dbtoaster {
+     { TRACESTEP,0,"","trace-step",  Arg::Numeric, "  \t--trace-step=<arg>  \ttrace step size." },
+     { LOGCOUNT, 0,"","log-count",   Arg::Numeric, "  \t--log-count=<arg>  \tlog tuple count every [arg] updates." },
+     { ITERATIONS, 1,"","iterations",   Arg::Numeric, "  \t--iterations=<arg>  \titerate [arg] times over the dataset." },
++    { BUFFER_FRAC, 1,"","buffer-frac",   Arg::Numeric, "  \t--buffer-frac=<arg>  \tReserve fraction [arg] (1-100) of maximal latency buffer space." },
++#ifdef USE_RDTSC
++    { LOWERLAT, 0,"","lower-lat",   Arg::Numeric, "  \t--lower-lat=<arg>  \tlower bound [arg] (TSC cycles) below which latencies are recorded." },
++    { UPPERLAT, 0,"","upper-lat",   Arg::Numeric, "  \t--upper-lat=<arg>  \tupper bound [arg] (TSC cycles) above which latencies are recorded." },
++#else
++    { LOWERLAT, 0,"","lower-lat",   Arg::Numeric, "  \t--lower-lat=<arg>  \tlower bound [arg] (ns) below which latencies are recorded." },
++    { UPPERLAT, 0,"","upper-lat",   Arg::Numeric, "  \t--upper-lat=<arg>  \tupper bound [arg] (ns) above which latencies are recorded." },
++#endif
+     { 0, 0, 0, 0, 0, 0 } };
+     
+     struct runtime_options {
+@@ -111,6 +122,8 @@ namespace dbtoaster {
+       std::unordered_set<std::string> traced_maps;
+       unsigned int log_tuple_count_every;
+       unsigned int iterations;
++      unsigned long lower_lat, upper_lat;
++      int buffer_frac;
+ 
+       // Verbose
+       static bool _verbose;
+@@ -123,7 +136,8 @@ namespace dbtoaster {
+       unsigned int parallel;
+ 
+       bool no_output;
+-
++      int timeout;
++      
+       runtime_options(int argc = 0, char* argv[] = 0);
+ 
+       void process_options(int argc, char* argv[]);
+-- 
+2.10.2
+

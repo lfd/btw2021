@@ -1,0 +1,184 @@
+From 51e39bd05df1faeabea26bdadb9427caf15cf7b2 Mon Sep 17 00:00:00 2001
+From: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Date: Thu, 1 Oct 2020 16:53:53 +0200
+Subject: [PATCH 07/12] Allow for using rdtsc to measure time stamps on x86
+
+A proper clock that provides absolute time values
+is not available on all targets (e.g, on a bare jailhouse
+x86 cell). Allow for using the x86 time stamp counter
+to obtain monotonically increasing time stamps when
+USE_RDTSC is set.
+
+Signed-off-by: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Signed-off-by: Ralf Ramsauer <ralf.ramsauer@oth-regensburg.de>
+Reviewed-by: Stefanie Scherzinger <stefanie.scherzinger@uni-passau.de>
+---
+ ddbtoaster/srccpp/lib/iprogram.cpp     | 19 +++++++++++++++----
+ ddbtoaster/srccpp/lib/iprogram.hpp     | 12 ++++++++++--
+ ddbtoaster/srccpp/lib/program_base.cpp |  4 +---
+ ddbtoaster/srccpp/lib/program_base.hpp | 25 +++++++++++++++++++++++++
+ 4 files changed, 51 insertions(+), 9 deletions(-)
+
+diff --git a/ddbtoaster/srccpp/lib/iprogram.cpp b/ddbtoaster/srccpp/lib/iprogram.cpp
+index 1d38317..75228d6 100644
+--- a/ddbtoaster/srccpp/lib/iprogram.cpp
++++ b/ddbtoaster/srccpp/lib/iprogram.cpp
+@@ -144,12 +144,18 @@ IProgram::snapshot_t IProgram::wait_for_snapshot()
+ 	return result;
+ }
+ 
+-void IProgram::log_timestamp(struct timespec val) {
++void IProgram::log_timestamp(tstamp_t val) {
+ 	log_buffer[log_idx++] = val;
+ }
+ 
+-struct timespec diff(struct timespec start, struct timespec end)  {
+-    struct timespec temp;
++#ifdef USE_RDTSC
++tstamp_t diff(tstamp_t start, tstamp_t end)  {
++    tstamp_t diff = end - start;
++    return diff;
++}
++#else
++tstamp_t diff(tstamp_t start, tstamp_t end)  {
++    tstamp_t temp;
+     if ((end.tv_nsec-start.tv_nsec) < 0) {
+       temp.tv_sec = end.tv_sec-start.tv_sec-1;
+       temp.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
+@@ -159,9 +165,10 @@ struct timespec diff(struct timespec start, struct timespec end)  {
+     }
+     return temp;
+ }
++#endif
+ 
+ void IProgram::print_log_buffer() {
+-  struct timespec start, diff1, diff2;
++  tstamp_t start, diff1, diff2;
+ 
+ 	if (log_buffer.size() < 2) {
+ 		cerr << "Log buffer is empty. Did you forget to set --log-count?" << endl;
+@@ -173,8 +180,12 @@ void IProgram::print_log_buffer() {
+ 		diff1 = diff(log_buffer[0], log_buffer[i]);
+ 		diff2 = diff(start, log_buffer[i]);
+ 
++#ifdef USE_RDTSC
++		std::cout << diff1 << "\t" << diff2 << std::endl;
++#else
+ 		std::cout << (long)(diff1.tv_sec * 1e9 + diff1.tv_nsec) << "\t" <<
+ 		  (long)(diff2.tv_sec * 1e9 + diff2.tv_nsec) << std::endl;
++#endif
+ 
+ 		start = log_buffer[i];
+ 	}
+diff --git a/ddbtoaster/srccpp/lib/iprogram.hpp b/ddbtoaster/srccpp/lib/iprogram.hpp
+index 12ae8ca..135eba9 100644
+--- a/ddbtoaster/srccpp/lib/iprogram.hpp
++++ b/ddbtoaster/srccpp/lib/iprogram.hpp
+@@ -14,6 +14,7 @@
+ #include <future>
+ #include <functional>
+ #include <cassert>
++#include <cstdint>
+ #include <string>
+ #include <vector>
+ #include <time.h>
+@@ -27,6 +28,12 @@ namespace dbtoaster {
+ struct event_t;
+ struct tlq_t;
+ 
++#ifdef USE_RDTSC
++  typedef uint64_t tstamp_t ;
++#else
++  typedef struct timespec tstamp_t;
++#endif
++
+ /**
+  * IProgram is the base class for executing sql programs. It provides
+  * functionality for running the program in synchronous or asynchronous mode
+@@ -45,6 +52,7 @@ public:
+         , finished(false)
+         , snapshot_ready(true)
+         , snapshot_request(false)
++	, log_idx(0)
+     {}
+     virtual ~IProgram() {
+     }
+@@ -156,7 +164,7 @@ protected:
+     /**
+      * Log a timestamp after after completing a tuple processing batch
+      */
+-    void log_timestamp(struct timespec val);
++    void log_timestamp(tstamp_t val);
+ 
+ private:
+     bool running;
+@@ -169,7 +177,7 @@ private:
+ 
+     bool snapshot_request;
+     snapshot_t snapshot;
+-    std::vector<struct timespec> log_buffer;
++    std::vector<tstamp_t> log_buffer;
+     size_t log_idx;
+ };
+ }
+diff --git a/ddbtoaster/srccpp/lib/program_base.cpp b/ddbtoaster/srccpp/lib/program_base.cpp
+index dcdafc1..320eaaf 100644
+--- a/ddbtoaster/srccpp/lib/program_base.cpp
++++ b/ddbtoaster/srccpp/lib/program_base.cpp
+@@ -305,9 +305,7 @@ void ProgramBase::process_stream_event(const event_t& _evt) {
+ 
+ 	// buffer output and only print after execution
+ 	if (log_count_every && (tuple_count % log_count_every == 0)) {
+-	    struct timespec val;
+-	    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &val);
+-	    log_timestamp(val);
++		log_timestamp(get_tstamp());
+ 	}
+ 	tuple_count += 1;
+ 
+diff --git a/ddbtoaster/srccpp/lib/program_base.hpp b/ddbtoaster/srccpp/lib/program_base.hpp
+index 3ae617c..0badf93 100644
+--- a/ddbtoaster/srccpp/lib/program_base.hpp
++++ b/ddbtoaster/srccpp/lib/program_base.hpp
+@@ -17,6 +17,10 @@
+ #include <functional>
+ #include <iostream>
+ #include <fstream>
++#include <cstdint>
++#ifdef USE_RDTSC
++#include <x86intrin.h>
++#endif
+ 
+ #include "runtime.hpp"
+ #include "iprogram.hpp"
+@@ -195,6 +199,27 @@ protected:
+     unsigned int log_count_every;
+ 
+ private:
++#ifdef USE_RDTSC
++    static inline void lfence(void) {
++       asm volatile("lfence" ::: "memory");
++    }
++
++    inline tstamp_t get_tstamp(void) {
++      // Since rdtscp is only supported from Core i7 onwards,
++      // we use rdtsc, and ensure it's serialised by a pre/post mfence
++
++      lfence();
++      tstamp_t val = __rdtsc();
++      lfence();
++      return val;
++    }
++#else
++    inline tstamp_t get_tstamp(void) {
++	tstamp_t val;
++	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &val);
++	return(val);
++    }
++#endif
+     void trace(const path& trace_file, bool debug);
+     void trace(std::ostream &ofs, bool debug);
+ 
+-- 
+2.10.2
+

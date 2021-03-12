@@ -1,0 +1,37 @@
+From 11b8961ee1dc039db073791fb432634371dd7c65 Mon Sep 17 00:00:00 2001
+From: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Date: Sun, 27 Sep 2020 23:08:15 +0200
+Subject: [PATCH 04/12] Inline definition of operator<< for pstrings
+
+The symbol can appear multiple times in different compilation
+units otherwise.
+
+Signed-off-by: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Reviewed-by: Stefanie Scherzinger <stefanie.scherzinger@uni-passau.de>
+---
+ ddbtoaster/srccpp/lib/hpds/pstringops.hpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ddbtoaster/srccpp/lib/hpds/pstringops.hpp b/ddbtoaster/srccpp/lib/hpds/pstringops.hpp
+index 73754d5..92a416d 100644
+--- a/ddbtoaster/srccpp/lib/hpds/pstringops.hpp
++++ b/ddbtoaster/srccpp/lib/hpds/pstringops.hpp
+@@ -11,7 +11,7 @@ inline bool operator!=(const char *str1, const PString &str2)
+   return (strcmp(str1,str2.data_) != 0);
+ }
+ 
+-std::ostream& operator<< (std::ostream& o, PString const& str)
++inline std::ostream& operator<< (std::ostream& o, PString const& str)
+ {
+   return o << "\"" << str.data_ << "\"";
+ }
+@@ -19,4 +19,4 @@ std::ostream& operator<< (std::ostream& o, PString const& str)
+ FORCE_INLINE size_t hash_value(PString const& str)
+ {
+     return MurmurHash2(str.data_,(str.size_-1)*sizeof(char),0);
+-}
+\ No newline at end of file
++}
+-- 
+2.10.2
+

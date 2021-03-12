@@ -1,0 +1,122 @@
+From 83aaee40d944b823ebdfd0d0be54e6f634d994a4 Mon Sep 17 00:00:00 2001
+From: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Date: Sun, 27 Sep 2020 19:31:40 +0200
+Subject: [PATCH 03/12] Map input data directly into memory
+
+The purpose of reading the input data from a stream into
+a buffer is to avoid I/O noise during the measurement proper.
+However, this method does not guarantee intervention by the
+kernel, and can be done more reliably by mapping the input
+data (on Linux) with MAP_POPULATE. If allocations are properly
+lockeds, this guarantees that the data will remain in RAM
+until explicit deallocation.
+
+On systems that don't support MAP_POPULATE, we try to
+place data in RAM after mapping on a best-effort basis
+by touching every involved page frame once before
+commencing with measurements.
+
+Signed-off-by: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Reviewed-by: Stefanie Scherzinger <stefanie.scherzinger@uni-passau.de>
+---
+ ddbtoaster/srccpp/lib/streams.cpp | 45 +++++++++++++++++++--------------------
+ ddbtoaster/srccpp/lib/streams.hpp |  4 ++--
+ 2 files changed, 24 insertions(+), 25 deletions(-)
+
+diff --git a/ddbtoaster/srccpp/lib/streams.cpp b/ddbtoaster/srccpp/lib/streams.cpp
+index 1e61f95..c6ef483 100644
+--- a/ddbtoaster/srccpp/lib/streams.cpp
++++ b/ddbtoaster/srccpp/lib/streams.cpp
+@@ -4,6 +4,10 @@
+ 
+ #include "filepath.hpp"
+ 
++#include <unistd.h>
++#include <fcntl.h>
++#include <sys/mman.h>
++
+ using namespace ::dbtoaster::runtime;
+ 
+ namespace dbtoaster {
+@@ -23,8 +27,19 @@ dbt_file_source::dbt_file_source(
+ {
+ 	if ( file_exists( path ) )
+ 	{
+-		source_stream = std::shared_ptr<file_stream>(new file_stream(path.c_str(), file_stream::in));
+-		if( runtime_options::verbose() )
++		int fd = open(path.c_str(), O_RDONLY);
++		size = lseek(fd, 0, SEEK_END);
++
++		#ifdef __linux__
++		mmap(data, size, PROT_READ|PROT_WRITE, MAP_FILE|MAP_PRIVATE|MAP_POPULATE, fd, 0);
++		#else
++		mmap(data, size, PROT_READ|PROT_WRITE, MAP_FILE|MAP_PRIVATE, fd, 0);
++	        #endif
++		if (!data) {
++			std::cerr << "Internal error: mmap of existing file failed" << std::endl;
++			exit(-1);
++		}
++	  	if( runtime_options::verbose() )
+ 			std::cerr << "reading from " << path
+ 				 << " with 1 adaptors" << std::endl;
+ 	}
+@@ -33,20 +48,8 @@ dbt_file_source::dbt_file_source(
+ }
+ 
+ void dbt_file_source::read_source_events(std::shared_ptr<std::list<event_t> > eventList, std::shared_ptr<std::list<event_t> > eventQue) {
+-	//read the whole file
+-	source_stream->seekg(0, std::ios::end);
+-	size_t bufferLength = source_stream->tellg();
+-	size_t extra_buffer = 0;
+-	//reserving some buffer for a possible missing delimiter at the end
+-	if ( frame_info.type == delimited ) {
+-		extra_buffer = frame_info.delimiter.size();
+-	}
+-	char* buffer = new char[bufferLength+1+extra_buffer];
+-	char* buffer_end = buffer + bufferLength;
+-	*buffer_end = '\0';
+-	source_stream->seekg(0, std::ios::beg);
+-	source_stream->read(buffer,bufferLength);
+-	source_stream->close();
++	char* buffer = data;
++	char* buffer_end = data + size;
+ 
+ 	char* start_event_pos = buffer;
+ 	char* end_event_pos = buffer;
+@@ -65,15 +68,11 @@ void dbt_file_source::read_source_events(std::shared_ptr<std::list<event_t> > ev
+ 		const char* delim = frame_info.delimiter.c_str();
+ 		size_t delim_size = frame_info.delimiter.size();
+ 
+-		//add delimeter at the end, if it does not exist
++		// Check if delimiter is present at the end
+ 		for(size_t delim_idx = 0; delim_idx < delim_size; ++delim_idx) {
+ 			if(*(buffer_end-1-delim_idx) != *(delim+delim_size-1)) {
+-				for(delim_idx = 0; delim_idx < delim_size; ++delim_idx) {
+-					*buffer_end = *(delim+delim_idx);
+-					buffer_end+=1;
+-				}
+-				*buffer_end = '\0';
+-				break;
++				std::cerr << "Wrong delimiter at EOF, go fix your data " << std::endl;
++				exit(-1);
+ 			}
+ 		}
+ 
+diff --git a/ddbtoaster/srccpp/lib/streams.hpp b/ddbtoaster/srccpp/lib/streams.hpp
+index 6c23258..8833eea 100644
+--- a/ddbtoaster/srccpp/lib/streams.hpp
++++ b/ddbtoaster/srccpp/lib/streams.hpp
+@@ -63,8 +63,8 @@ struct source
+ 
+ struct dbt_file_source : public source
+ {
+-    typedef std::ifstream file_stream;
+-    std::shared_ptr<file_stream> source_stream;
++    char *data = nullptr;
++    size_t size;
+ 
+     dbt_file_source(const std::string& path, frame_descriptor& f, std::shared_ptr<stream_adaptor> a);
+ 
+-- 
+2.10.2
+

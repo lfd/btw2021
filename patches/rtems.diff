@@ -1,0 +1,17 @@
+diff --git a/cpukit/libmisc/untar/untar.c b/cpukit/libmisc/untar/untar.c
+index a2f09fb..e97ac65c 100644
+--- a/cpukit/libmisc/untar/untar.c
++++ b/cpukit/libmisc/untar/untar.c
+@@ -223,6 +223,12 @@ Untar_ProcessHeader(
+     ctx->nblocks = (((ctx->file_size) + 511) & ~511) / 512;
+   } else if (ctx->linkflag == DIRTYPE) {
+     rtems_printf(ctx->printer, "untar: dir: %s\n", ctx->file_path);
++
++    /* Don't try creating the current path . because it exists */
++    if (strnlen(ctx->file_path, 2) == 1 &&
++        ctx->file_path[0] == '.')
++        return retval;
++
+     r = mkdir(ctx->file_path, ctx->mode);
+     if (r != 0) {
+       Print_Error(ctx->printer, "mkdir", ctx->file_path);

@@ -1,0 +1,67 @@
+from __future__ import print_function
+import os
+
+rtems_version = "5"
+
+try:
+    import rtems_waf.rtems as rtems
+    import rtems_waf.rootfs as rootfs
+except:
+    print('error: no rtems_waf git submodule')
+    import sys
+    sys.exit(1)
+
+def init(ctx):
+    rtems.init(ctx, version = rtems_version, long_commands = True)
+
+def bsp_configure(conf, arch_bsp):
+    # Add BSP specific configuration checks
+    pass
+
+def options(opt):
+    rtems.options(opt)
+
+def configure(conf):
+    conf.env.LIB_DBT       = ['libdbtoaster']
+    conf.env.LIBPATH_DBT   = ['lib/']
+    rtems.configure(conf, bsp_configure = bsp_configure)
+
+def build(bld):
+    rtems.build(bld)
+
+    if rtems.check_env(bld, 'RTEMS_BIN2C'):
+        rootfs.build_from_src_root(bld,
+                                   name = 'fs-root',
+                                   root = 'rootfs' + os.getenv('ROOTFS_SFX', ''))
+    bld.path.find_or_declare('fs-root-tar.h')
+
+    bld.objects(source = "lib/smhasher/MurmurHash2.cpp \
+	                  lib/hpds/pstring.cpp lib/hpds/KDouble.cpp \
+                          lib/event.cpp lib/iprogram.cpp lib/program_base.cpp \
+                          lib/runtime.cpp lib/standard_adaptors.cpp \
+                          lib/standard_functions.cpp lib/streams.cpp",
+		cxxflags = os.getenv('CXXFLAGS', '') + ' -O3',
+		target = "toaster_objs")
+
+    bld(features='cxx cxxstlib',
+        use='toaster_objs',
+        target='dbtoaster')
+
+    bld(features = 'cxx',
+        target   = 'driver',
+        includes = 'lib/ ./',
+	## NOTE: Passing cxxflags via an array, which is more appropriate, 
+        ## leads to waf wrongly passing arguments to gcc
+        cxxflags = os.getenv('CXXFLAGS', '') + ' -O3 -include generated/' + os.getenv('QUERY', 'Tpch1-V') + '.hpp',
+        source   = 'driver_sequential.cpp')
+
+
+    bld(features = 'cxx cxxprogram',
+        target = 'dbtoaster.exe',
+	includes = 'lib/',
+        cxxflags = '-O3',
+        ldflags  = 'libdbtoaster.a',
+	use      = ['dbtoaster', 'driver'],
+        source = ['dbtoaster.cc',
+	          'fs-root-tar.c',
+                  'init.cc'])

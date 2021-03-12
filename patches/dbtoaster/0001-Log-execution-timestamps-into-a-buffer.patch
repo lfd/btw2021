@@ -1,0 +1,173 @@
+From 952fd82d3bb09d3ccbf7023b821ed543298204da Mon Sep 17 00:00:00 2001
+From: Edson Lucas <edson.lucas@uni-passau.de>
+Date: Tue, 22 Sep 2020 14:19:25 +0200
+Subject: [PATCH 01/12] Log execution timestamps into a buffer
+
+By not printing execution timestamps when --log-buffer
+is specified, we avoid producing output that might
+be emitted over a slow channel (e.g., serial line),
+which massively perturbs measurements. Collect
+all time values in a buffer, and only print
+them in end.
+
+Also change the log format into logging time differences. This
+allows us to easily combine measured results that focus
+on latency from multiple measurement runs.
+
+Signed-off-by: Edson Lucas <edson.lucas@uni-passau.de>
+Signed-off-by: Wolfgang Mauerer <wolfgang.mauerer@othr.de>
+Reviewed-by: Stefanie Scherzinger <stefanie.scherzinger@uni-passau.de>
+---
+ ddbtoaster/srccpp/lib/iprogram.cpp     | 43 ++++++++++++++++++++++++++++++++++
+ ddbtoaster/srccpp/lib/iprogram.hpp     | 26 ++++++++++++++++++++
+ ddbtoaster/srccpp/lib/program_base.cpp |  8 +++----
+ 3 files changed, 73 insertions(+), 4 deletions(-)
+
+diff --git a/ddbtoaster/srccpp/lib/iprogram.cpp b/ddbtoaster/srccpp/lib/iprogram.cpp
+index 389bf62..abf593b 100644
+--- a/ddbtoaster/srccpp/lib/iprogram.cpp
++++ b/ddbtoaster/srccpp/lib/iprogram.cpp
+@@ -1,5 +1,7 @@
+ #include "iprogram.hpp"
+ #include "event.hpp"
++#include <iostream>
++#include <time.h>
+ 
+ namespace dbtoaster {
+ 
+@@ -33,6 +35,7 @@ void IProgram::run( bool async ) {
+  */
+ IProgram::snapshot_t IProgram::get_snapshot()
+ {
++
+ 	if( !is_finished() )
+ 	{
+ 		request_snapshot();
+@@ -141,4 +144,44 @@ IProgram::snapshot_t IProgram::wait_for_snapshot()
+ 	return result;
+ }
+ 
++void IProgram::log_timestamp(struct timespec val) {
++    log_buffer.push_back(val);
++}
++
++struct timespec diff(struct timespec start, struct timespec end)  {
++    struct timespec temp;
++    if ((end.tv_nsec-start.tv_nsec) < 0) {
++      temp.tv_sec = end.tv_sec-start.tv_sec-1;
++      temp.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
++    } else {
++      temp.tv_sec = end.tv_sec-start.tv_sec;
++      temp.tv_nsec = end.tv_nsec-start.tv_nsec;
++    }
++    return temp;
++}
++
++void IProgram::print_log_buffer() {
++  struct timespec start, end, diff1, diff2;
++
++	if (log_buffer.size() < 2) {
++		cerr << "Log buffer is empty. Did you forget to set --log-count?" << endl;
++		return;
++	}
++
++	start = log_buffer[0];
++	for (auto it = log_buffer.begin() + 1; it != log_buffer.end(); ++it)  {
++		end = *it;
++		diff1 = diff(log_buffer[0], end);
++		diff2 = diff(start, end);
++
++		std::cout << (long)(diff1.tv_sec * 1e9 + diff1.tv_nsec) << "\t" <<
++		  (long)(diff2.tv_sec * 1e9 + diff2.tv_nsec) << std::endl;
++
++		start = *it;
++	}
++
++	log_buffer.clear();
++}
++
++
+ }
+diff --git a/ddbtoaster/srccpp/lib/iprogram.hpp b/ddbtoaster/srccpp/lib/iprogram.hpp
+index e7336bf..0e82c23 100644
+--- a/ddbtoaster/srccpp/lib/iprogram.hpp
++++ b/ddbtoaster/srccpp/lib/iprogram.hpp
+@@ -14,8 +14,14 @@
+ #include <future>
+ #include <functional>
+ #include <cassert>
++#include <string>
++#include <vector>
++#include <time.h>
++#include <sys/time.h>
+ #include "serialization.hpp"
+ 
++using namespace std;
++
+ namespace dbtoaster {
+ 
+ struct event_t;
+@@ -74,6 +80,18 @@ public:
+      */
+     snapshot_t get_snapshot();
+ 
++    /**
++     * Print content of log buffer (deltas and absolute time stamps)
++     */
++    void print_log_buffer();
++
++    /**
++     * Resize the log buffer to avoid allocations during latency measurements
++     */
++    void resize_log_buffer(size_t size) {
++        log_buffer.resize(size);
++    };
++
+ protected:
+     /**
+      * This should get overridden by a function that reads stream events and
+@@ -134,6 +152,12 @@ protected:
+      */
+     snapshot_t wait_for_snapshot();
+ 
++
++    /**
++     * Log a timestamp after after completing a tuple processing batch
++     */
++    void log_timestamp(struct timespec val);
++
+ private:
+     bool running;
+     bool finished;
+@@ -145,6 +169,8 @@ private:
+ 
+     bool snapshot_request;
+     snapshot_t snapshot;
++    std::vector<struct timespec> log_buffer;
++
+ };
+ }
+ 
+diff --git a/ddbtoaster/srccpp/lib/program_base.cpp b/ddbtoaster/srccpp/lib/program_base.cpp
+index d234a4a..dcdafc1 100644
+--- a/ddbtoaster/srccpp/lib/program_base.cpp
++++ b/ddbtoaster/srccpp/lib/program_base.cpp
+@@ -303,11 +303,11 @@ void ProgramBase::process_stream_event(const event_t& _evt) {
+ 
+ 	process_event(_evt, false);
+ 
++	// buffer output and only print after execution
+ 	if (log_count_every && (tuple_count % log_count_every == 0)) {
+-		struct timeval tp;
+-		gettimeofday(&tp, NULL);
+-		cout << tuple_count << " tuples processed at " << tp.tv_sec << "s+"
+-				<< tp.tv_usec << "us" << endl;
++	    struct timespec val;
++	    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &val);
++	    log_timestamp(val);
+ 	}
+ 	tuple_count += 1;
+ 
+-- 
+2.10.2
+

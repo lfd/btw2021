@@ -1,0 +1,31 @@
+From 2a6f57619faa7e9b0770329c7d659eba97f18db0 Mon Sep 17 00:00:00 2001
+From: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Date: Fri, 2 Oct 2020 16:49:26 +0200
+Subject: [PATCH 09/12] Honour CXXFLAGS
+
+CPPFLAGS concern the preprocessor; CFLAGS concern the C compiler;
+CXXFLAGS are for C++. Use the latter in addition to the rather
+unique CPP_FLAGS to pass compiler options from outside.
+
+Signed-off-by: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Reviewed-by: Stefanie Scherzinger <stefanie.scherzinger@uni-passau.de>
+---
+ ddbtoaster/srccpp/lib/makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ddbtoaster/srccpp/lib/makefile b/ddbtoaster/srccpp/lib/makefile
+index 120ecd2..286d9f4 100644
+--- a/ddbtoaster/srccpp/lib/makefile
++++ b/ddbtoaster/srccpp/lib/makefile
+@@ -61,7 +61,7 @@ $(OBJ_FILES) : bin/%.o : %.cpp $(HDR_FILES)
+ 	@mkdir -p ./bin/hpds
+ 	@mkdir -p ./bin/smhasher
+ 	@echo Compiling $<
+-	@$(G++) -I$(BOOST_INC_DIR) -L$(BOOST_LIB_DIR) -Wall -std=c++11 $(CPP_FLAGS) $(patsubst %,-I %,$(CPP_HDR_PATH)) -O3 -o $(patsubst %.cpp,bin/%.o,$<) -c $<
++	@$(G++) -I$(BOOST_INC_DIR) -L$(BOOST_LIB_DIR) -Wall -std=c++11 $(CPP_FLAGS) $(CXXFLAGS) $(patsubst %,-I %,$(CPP_HDR_PATH)) -O3 -o $(patsubst %.cpp,bin/%.o,$<) -c $<
+ 
+ clean: 
+ 	rm -rf bin $(LIB_OBJ)
+-- 
+2.10.2
+

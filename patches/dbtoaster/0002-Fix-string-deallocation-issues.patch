@@ -1,0 +1,42 @@
+From 194721e34c556f56e35cafb14dd084d3c10894dd Mon Sep 17 00:00:00 2001
+From: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Date: Sat, 26 Sep 2020 23:48:53 +0200
+Subject: [PATCH 02/12] Fix string deallocation issues
+
+PStrings lack a destructor and therefore cause substantial
+memory leaks, which massively increase memory use of
+DBToaster. While this issue could be solved by
+re-enable the existing, commented-out destructor, the
+code has more issues. Functional correctness is more
+important in our scenario than few percents of performance
+gains for some specific use-cases, so switch to std::string.
+
+Signed-off-by: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Reviewed-by: Stefanie Scherzinger <stefanie.scherzinger@uni-passau.de>
+---
+ ddbtoaster/srccpp/lib/hpds/pstring.hpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ddbtoaster/srccpp/lib/hpds/pstring.hpp b/ddbtoaster/srccpp/lib/hpds/pstring.hpp
+index 97bc101..f7094af 100644
+--- a/ddbtoaster/srccpp/lib/hpds/pstring.hpp
++++ b/ddbtoaster/srccpp/lib/hpds/pstring.hpp
+@@ -31,7 +31,7 @@
+ #include "../smhasher/MurmurHash2.hpp"
+ 
+ #ifndef STRING_TYPE
+-#define STRING_TYPE PString
++#define STRING_TYPE std::string
+ #endif //STRING_TYPE
+ 
+ // #define USE_POOL
+@@ -367,4 +367,4 @@ public:
+     }
+ };
+ 
+-#endif //POOLED_STRING_H
+\ No newline at end of file
++#endif //POOLED_STRING_H
+-- 
+2.10.2
+

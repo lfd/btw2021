@@ -1,0 +1,164 @@
+From 7754317b5392d1489d25e441cb76cd50c600ca73 Mon Sep 17 00:00:00 2001
+From: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Date: Thu, 15 Oct 2020 00:15:37 +0200
+Subject: [PATCH 11/12] Introduce timeout feature
+
+Introduce a new command line option --timeout that allows for
+stopping measurements after a given amount of time, for instance
+to perform calibration runs over the same amount of time
+(as compared to the same amount of data points). Since a timer
+and a signal are used to ommunicate the timeout, this feature
+is not available on RTEMS.
+
+Signed-off-by: Wolfgang Mauerer <wolfgang.mauerer@othr.de>
+Reviewed-by: Stefanie Scherzinger <stefanie.scherzinger@uni-passau.de>
+---
+ ddbtoaster/srccpp/driver_sequential.cpp | 14 ++++++------
+ ddbtoaster/srccpp/lib/StreamProgram.hpp | 38 +++++++++++++++++++++++++++++++++
+ ddbtoaster/srccpp/lib/runtime.cpp       |  6 +++++-
+ ddbtoaster/srccpp/lib/runtime.hpp       |  3 +--
+ 4 files changed, 52 insertions(+), 9 deletions(-)
+
+diff --git a/ddbtoaster/srccpp/driver_sequential.cpp b/ddbtoaster/srccpp/driver_sequential.cpp
+index 9fce835..6aa76a0 100644
+--- a/ddbtoaster/srccpp/driver_sequential.cpp
++++ b/ddbtoaster/srccpp/driver_sequential.cpp
+@@ -1,5 +1,6 @@
+ /* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
+ #include <csignal>
++#include <time.h>
+ #include <sys/mman.h>
+ #include "StreamProgram.hpp"
+ 
+@@ -28,17 +29,18 @@ int main(int argc, char* argv[]) {
+ 	dbtoaster::Program::snapshot_t snap;
+ 
+ #if !defined(__rtems__)
+-        gp = &p;
+-        signal(SIGINT, finish_measurement);
++	gp = &p;
++	signal(SIGINT, finish_measurement);
+ #endif
+ 
+ 	p.init();
+ 	p.run(false);
+ 
+ 	p.print_log_buffer();
+-#if 0
+-	snap = p.get_snapshot();
+-	DBT_SERIALIZATION_NVP_OF_PTR(cout, snap);
+-#endif
++
++	if (!p.is_no_output()) {
++		snap = p.get_snapshot();
++		DBT_SERIALIZATION_NVP_OF_PTR(cout, snap);
++    }
+ 	return 0;
+ }
+diff --git a/ddbtoaster/srccpp/lib/StreamProgram.hpp b/ddbtoaster/srccpp/lib/StreamProgram.hpp
+index 6356cd2..a76a7dc 100644
+--- a/ddbtoaster/srccpp/lib/StreamProgram.hpp
++++ b/ddbtoaster/srccpp/lib/StreamProgram.hpp
+@@ -3,6 +3,9 @@
+ #ifndef STREAM_PROGRAM_HPP
+ #define STREAM_PROGRAM_HPP
+ 
++#include <time.h>
++#include <csignal>
++
+ namespace dbtoaster {
+   class StreamProgram : public Program {
+   private:
+@@ -34,9 +37,44 @@ namespace dbtoaster {
+ 		  resize_log_buffer(iterations*(tuples/log_count_every + 1));
+ 	  };
+ 
++#if !defined(__rtems__) && !defined(__APPLE__)
++	  void set_timeout() {
++		  timer_t timerid;
++		  struct sigevent sev;
++		  struct itimerspec its;
++
++		  sev.sigev_notify = SIGEV_SIGNAL;
++		  sev.sigev_signo = SIGINT;
++		  sev.sigev_value.sival_ptr = &timerid;
++		  if (timer_create(CLOCK_MONOTONIC, &sev, &timerid) == -1) {
++			  std::cerr << "Internal error: timer_create failed" << std::endl;
++			  exit(-1);
++		  }
++
++		  its.it_value.tv_sec = run_opts->timeout;
++		  its.it_value.tv_nsec = 0;
++		  its.it_interval.tv_sec = 0;
++		  its.it_interval.tv_nsec = 0;
++
++		  if (timer_settime(timerid, 0, &its, NULL) == -1) {
++			  std::cerr << "Internal error: could not set timer" << std::endl;
++			  exit(-1);
++		  }
++	  };
++#else
++	  void set_timeout() {
++		  std::cerr << "RTEMS and MacOC do not support timeouts" << std::endl;
++		  exit(-1);
++	  };
++#endif
++
+   public:
+   StreamProgram(int argc=0, char *argv[] = nullptr): Program(argc, argv) {};
+ 	  void init() {
++		  if (run_opts->timeout != 0) {
++			  set_timeout();
++		  }
++
+ 		  table_multiplexer.init_source(run_opts->batch_size, run_opts->parallel, true);
+ 		  iterations = run_opts->iterations;
+ 		  process_tables();
+diff --git a/ddbtoaster/srccpp/lib/runtime.cpp b/ddbtoaster/srccpp/lib/runtime.cpp
+index b94da10..8bcfc44 100644
+--- a/ddbtoaster/srccpp/lib/runtime.cpp
++++ b/ddbtoaster/srccpp/lib/runtime.cpp
+@@ -41,6 +41,7 @@ runtime_options::runtime_options(int argc, char* argv[]) :
+   , batch_size(0)
+   , parallel(MIX_INPUT_TUPLES)
+   , no_output(false)
++  , timeout(0)
+ {
+ 	init(argc, argv);
+ }
+@@ -140,7 +141,10 @@ void runtime_options::process_options(int argc, char* argv[])
+ 			case NO_OUTPUT:
+ 				no_output = true;
+ 				break;
+-			case UNKNOWN:
++			case TIMEOUT:
++			        timeout = std::atoi(opt.arg);
++				break;
++		        case UNKNOWN:
+ 				// not possible because Arg::Unknown returns ARG_ILLEGAL
+ 				// which aborts the parse with an error
+ 				break;
+diff --git a/ddbtoaster/srccpp/lib/runtime.hpp b/ddbtoaster/srccpp/lib/runtime.hpp
+index 6287ff2..2449546 100644
+--- a/ddbtoaster/srccpp/lib/runtime.hpp
++++ b/ddbtoaster/srccpp/lib/runtime.hpp
+@@ -82,7 +82,6 @@ namespace dbtoaster {
+     { PARALLEL_INPUT,0,"p","par-stream", Arg::Required,"  -p  <arg>, \t--par-stream  \tparallel streams (0=off, 2=deterministic)" },
+     { NO_OUTPUT     ,0,"n","no-output",  Arg::None,    "  -n       , \t--no-output  \tdo not print the output result in the standard output" },
+     { TIMEOUT       ,0,"","timeout",    Arg::Numeric,   "  \t--timeout=<arg>  \tstop measurement after [arg] seconds" },
+-
+     // Statistics profiling parameters
+     { SAMPLESZ, 0,"","samplesize",  Arg::Numeric, "  \t--samplesize=<arg>  \tsample window size for trigger profiles." },
+     { SAMPLEPRD,0,"","sampleperiod",Arg::Numeric, "  \t--sampleperiod=<arg>  \tperiod length, as number of trigger events." },
+@@ -137,7 +136,7 @@ namespace dbtoaster {
+ 
+       bool no_output;
+       int timeout;
+-      
++
+       runtime_options(int argc = 0, char* argv[] = 0);
+ 
+       void process_options(int argc, char* argv[]);
+-- 
+2.10.2
+

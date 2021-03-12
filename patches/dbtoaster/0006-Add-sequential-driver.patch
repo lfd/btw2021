@@ -1,0 +1,381 @@
+From ad17a900befd26619583717e91a366d8c1070d00 Mon Sep 17 00:00:00 2001
+From: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Date: Sun, 27 Sep 2020 23:48:56 +0200
+Subject: [PATCH 06/12] Add sequential driver
+
+This driver reads (and locks, for Linux) all input data into
+memory, and then feeds the resulting events one-by-one into
+DBToaster, instead of constructing them upfront. This saves
+considerable amounts of memory, but does not increase
+I/O noise. For RTEMS, which has trouble mmap'ing
+data from in-RAM filesystems, we resort to reading
+from C++ streams.
+
+Note that binaries using MLOCKALL require capability
+cap_ipc_lock if not executed with root privileges. Which
+one would usually not want to do with a DB query engine.
+
+Signed-off-by: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Reviewed-by: Stefanie Scherzinger <stefanie.scherzinger@uni-passau.de>
+---
+ ddbtoaster/srccpp/driver_sequential.cpp |  44 ++++++++++++++
+ ddbtoaster/srccpp/lib/StreamProgram.hpp | 104 ++++++++++++++++++++++++++++++++
+ ddbtoaster/srccpp/lib/iprogram.cpp      |  13 ++--
+ ddbtoaster/srccpp/lib/iprogram.hpp      |   2 +-
+ ddbtoaster/srccpp/lib/streams.cpp       |  77 +++++++++++++++++------
+ ddbtoaster/srccpp/lib/streams.hpp       |   8 ++-
+ 6 files changed, 220 insertions(+), 28 deletions(-)
+ create mode 100644 ddbtoaster/srccpp/driver_sequential.cpp
+ create mode 100644 ddbtoaster/srccpp/lib/StreamProgram.hpp
+
+diff --git a/ddbtoaster/srccpp/driver_sequential.cpp b/ddbtoaster/srccpp/driver_sequential.cpp
+new file mode 100644
+index 0000000..9fce835
+--- /dev/null
++++ b/ddbtoaster/srccpp/driver_sequential.cpp
+@@ -0,0 +1,44 @@
++/* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
++#include <csignal>
++#include <sys/mman.h>
++#include "StreamProgram.hpp"
++
++#if !defined(__rtems__)
++dbtoaster::IProgram *gp;
++void finish_measurement(int signum) {
++    gp->print_log_buffer();
++    exit(signum);
++}
++#endif
++
++// Simple DBToaster driver that feeds events sequentially after mapping the complete
++// data set into memory.
++// TODO: print log buffer into stream, and direct this into a file (or cout, if
++// nothing specified)
++int main(int argc, char* argv[]) {
++#if defined(__linux__) || defined(__APPLE__)
++	if (mlockall(MCL_CURRENT | MCL_FUTURE)) {
++		cerr << "Could not lock memory, exiting" << endl;
++		cerr << "(did you forget to set cap_ipc_lock?)" << endl;
++		cerr << "Continuing w/o locked memory" << endl;
++	}
++#endif
++
++	dbtoaster::StreamProgram p(argc,argv);
++	dbtoaster::Program::snapshot_t snap;
++
++#if !defined(__rtems__)
++        gp = &p;
++        signal(SIGINT, finish_measurement);
++#endif
++
++	p.init();
++	p.run(false);
++
++	p.print_log_buffer();
++#if 0
++	snap = p.get_snapshot();
++	DBT_SERIALIZATION_NVP_OF_PTR(cout, snap);
++#endif
++	return 0;
++}
+diff --git a/ddbtoaster/srccpp/lib/StreamProgram.hpp b/ddbtoaster/srccpp/lib/StreamProgram.hpp
+new file mode 100644
+index 0000000..6064cb9
+--- /dev/null
++++ b/ddbtoaster/srccpp/lib/StreamProgram.hpp
+@@ -0,0 +1,104 @@
++/* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
++
++#ifndef STREAM_PROGRAM_HPP
++#define STREAM_PROGRAM_HPP
++
++namespace dbtoaster {
++  class StreamProgram : public Program {
++  private:
++	  void estimate_tuple_count() {
++		  size_t tuples = 0;
++
++		  // We don't need a log buffer if logging is disabled
++		  if (log_count_every == 0)
++			  return;
++
++		  auto it = stream_multiplexer.inputs.begin();
++		  auto end = stream_multiplexer.inputs.end();
++
++		  for (; it != end; ++it) {
++			  std::shared_ptr<dbt_file_source> s = std::dynamic_pointer_cast<dbt_file_source> (*it);
++
++			  if (s) {
++				  char *buf = s->buffer;
++				  size_t count;
++				  for (count=0; buf[count]; buf[count]=='\n' ? count++ : *buf++);
++
++				  // Add one for a potentially missing final EOL
++				  tuples += (count+1);
++			  }
++		  }
++
++		  // Add one to approximate ceil(...)
++		  resize_log_buffer(tuples/log_count_every + 1);
++	  };
++
++  public:
++  StreamProgram(int argc=0, char *argv[] = nullptr): Program(argc, argv) {};
++	  void init() {
++		  table_multiplexer.init_source(run_opts->batch_size, run_opts->parallel, true);
++		  process_tables();
++		  data.on_system_ready_event();
++	  };
++
++	  void process_streams() {
++		  estimate_tuple_count();
++
++		  // TODO: How do we properly handle multiple input streams? Interleave 1:1?
++		  // For now, the code assumes we have only one input stream
++		  std::vector<std::shared_ptr<source> >::iterator it = stream_multiplexer.inputs.begin();
++		  std::vector<std::shared_ptr<source> >::iterator end = stream_multiplexer.inputs.end();
++
++		  for (; it != end; ++it) {
++			  auto eventList = std::shared_ptr<std::list<event_t> >(new std::list<event_t>());
++			  auto eventQue = std::shared_ptr<std::list<event_t> >(new std::list<event_t>());
++
++			  std::shared_ptr<dbt_file_source> s = std::dynamic_pointer_cast<dbt_file_source> (*it);
++
++			  if (!s) {
++				  // Not sure how this should happen, but DBToaster makes a
++				  // corresponding checks
++				  cerr << "Internal error: Empty file source?!" << endl;
++				  exit(-1);
++			  }
++
++			  const char* delim = s->frame_info.delimiter.c_str();
++			  size_t delim_size = s->frame_info.delimiter.size();
++
++			  s->init_source(); // Technically, we know that this function is empty;
++			  // no idea why DBToaster insists on calling it -- it's not even part of
++			  // the base class
++
++			  char* start_event_pos = s->buffer;
++			  char* end_event_pos;
++
++			  while(start_event_pos) {
++				  end_event_pos = strstr(start_event_pos, delim);
++				  if(!end_event_pos || end_event_pos == s->buffer + s->bufferLength) break;
++				  *end_event_pos = '\0';
++				  s->adaptor->read_adaptor_events(start_event_pos,eventList,eventQue);
++
++				  while (!eventList->empty()) {
++					  process_stream_event(eventList->front());
++					  eventList->pop_front();
++				  }
++
++				  while (!eventQue->empty()) {
++					  process_stream_event(eventQue->front());
++					  eventQue->pop_front();
++				  }
++
++				  start_event_pos = end_event_pos + delim_size;
++			  }
++
++#if defined(__rtems__)
++			  delete[] s->buffer;
++#else
++			  munmap(s->buffer, s->bufferLength);
++#endif
++		  }
++	  };
++  };
++}
++
++#endif
+diff --git a/ddbtoaster/srccpp/lib/iprogram.cpp b/ddbtoaster/srccpp/lib/iprogram.cpp
+index abf593b..1d38317 100644
+--- a/ddbtoaster/srccpp/lib/iprogram.cpp
++++ b/ddbtoaster/srccpp/lib/iprogram.cpp
+@@ -145,7 +145,7 @@ IProgram::snapshot_t IProgram::wait_for_snapshot()
+ }
+ 
+ void IProgram::log_timestamp(struct timespec val) {
+-    log_buffer.push_back(val);
++	log_buffer[log_idx++] = val;
+ }
+ 
+ struct timespec diff(struct timespec start, struct timespec end)  {
+@@ -161,7 +161,7 @@ struct timespec diff(struct timespec start, struct timespec end)  {
+ }
+ 
+ void IProgram::print_log_buffer() {
+-  struct timespec start, end, diff1, diff2;
++  struct timespec start, diff1, diff2;
+ 
+ 	if (log_buffer.size() < 2) {
+ 		cerr << "Log buffer is empty. Did you forget to set --log-count?" << endl;
+@@ -169,15 +169,14 @@ void IProgram::print_log_buffer() {
+ 	}
+ 
+ 	start = log_buffer[0];
+-	for (auto it = log_buffer.begin() + 1; it != log_buffer.end(); ++it)  {
+-		end = *it;
+-		diff1 = diff(log_buffer[0], end);
+-		diff2 = diff(start, end);
++	for (size_t i=1; i < log_idx; i++)  {
++		diff1 = diff(log_buffer[0], log_buffer[i]);
++		diff2 = diff(start, log_buffer[i]);
+ 
+ 		std::cout << (long)(diff1.tv_sec * 1e9 + diff1.tv_nsec) << "\t" <<
+ 		  (long)(diff2.tv_sec * 1e9 + diff2.tv_nsec) << std::endl;
+ 
+-		start = *it;
++		start = log_buffer[i];
+ 	}
+ 
+ 	log_buffer.clear();
+diff --git a/ddbtoaster/srccpp/lib/iprogram.hpp b/ddbtoaster/srccpp/lib/iprogram.hpp
+index 0e82c23..12ae8ca 100644
+--- a/ddbtoaster/srccpp/lib/iprogram.hpp
++++ b/ddbtoaster/srccpp/lib/iprogram.hpp
+@@ -170,7 +170,7 @@ private:
+     bool snapshot_request;
+     snapshot_t snapshot;
+     std::vector<struct timespec> log_buffer;
+-
++    size_t log_idx;
+ };
+ }
+ 
+diff --git a/ddbtoaster/srccpp/lib/streams.cpp b/ddbtoaster/srccpp/lib/streams.cpp
+index c6ef483..60f858d 100644
+--- a/ddbtoaster/srccpp/lib/streams.cpp
++++ b/ddbtoaster/srccpp/lib/streams.cpp
+@@ -25,34 +25,73 @@ source::source(frame_descriptor& f, std::shared_ptr<stream_adaptor> a) : frame_i
+ dbt_file_source::dbt_file_source(
+ 		const std::string& path, frame_descriptor& f, std::shared_ptr<stream_adaptor> a): source(f,a)
+ {
+-	if ( file_exists( path ) )
+-	{
++  int flags = MAP_FILE|MAP_PRIVATE; // DBToaster may modify the mapped data, don't push changes back top disk
++#if defined(__linux__)
++		flags |= MAP_POPULATE; // Read data from block device on mmap
++#endif
++
++		if ( !file_exists( path ) ) {
++		  std::cerr << "File not found: " << path << std::endl;
++		  exit(-1);
++		}
++
++#if defined(__rtems__)
++		source_stream = std::shared_ptr<file_stream>(new file_stream(path.c_str(),
++									     file_stream::in));
++		//read the whole file
++		source_stream->seekg(0, std::ios::end);
++		bufferLength = source_stream->tellg();
++		size_t extra_buffer = 0;
++		//reserving some buffer for a possible missing delimiter at the end
++		if ( frame_info.type == delimited ) {
++		  extra_buffer = frame_info.delimiter.size();
++		}
++		buffer = new char[bufferLength+1+extra_buffer];
++		char* buffer_end = buffer + bufferLength;
++		*buffer_end = '\0';
++		source_stream->seekg(0, std::ios::beg);
++		source_stream->read(buffer, bufferLength);
++		source_stream->close();
++#else
+ 		int fd = open(path.c_str(), O_RDONLY);
+-		size = lseek(fd, 0, SEEK_END);
+-
+-		#ifdef __linux__
+-		mmap(data, size, PROT_READ|PROT_WRITE, MAP_FILE|MAP_PRIVATE|MAP_POPULATE, fd, 0);
+-		#else
+-		mmap(data, size, PROT_READ|PROT_WRITE, MAP_FILE|MAP_PRIVATE, fd, 0);
+-	        #endif
+-		if (!data) {
++		bufferLength = lseek(fd, 0, SEEK_END);
++
++		buffer = static_cast<char*>(mmap(NULL, bufferLength, PROT_READ|PROT_WRITE, flags, fd, 0));
++		close(fd);
++
++		if (!buffer) {
++			std::cerr << "Internal error: mmap of existing file failed" << std::endl;
++			exit(-1);
++		}
++#endif
++#if !defined(__linux__) && !defined(__rtems__)
++		// Touch every page once on systems that don't support pre-populating maps
++		// to ascertain (on a best-effort basis) that data are in memory
++		// (if MLOCKALL is enabled, the best-effort turns into a guarantee)
++		long psize = sysconf(_SC_PAGESIZE);
++                size_t num_pages = bufferLength/psize + (bufferLength % psize == 0 ? 0 : 1);
++
++                volatile char c;
++                for (size_t i = 0; i < num_pages; i++)
++			c = *(buffer + i * psize);
++
++		if (!buffer) {
+ 			std::cerr << "Internal error: mmap of existing file failed" << std::endl;
+ 			exit(-1);
+ 		}
++#endif
+ 	  	if( runtime_options::verbose() )
+ 			std::cerr << "reading from " << path
+ 				 << " with 1 adaptors" << std::endl;
+-	}
+-	else
+-		std::cerr << "File not found: " << path << std::endl;
+ }
+ 
+-void dbt_file_source::read_source_events(std::shared_ptr<std::list<event_t> > eventList, std::shared_ptr<std::list<event_t> > eventQue) {
+-	char* buffer = data;
+-	char* buffer_end = data + size;
+ 
++void dbt_file_source::read_source_events(std::shared_ptr<std::list<event_t> > eventList,
++					 std::shared_ptr<std::list<event_t> > eventQue) {
+ 	char* start_event_pos = buffer;
+ 	char* end_event_pos = buffer;
++	char* buffer_end = buffer + bufferLength;
++
+ 	if (frame_info.type == fixed_size) {
+ 		size_t frame_size = frame_info.size;
+ 		char tmp;
+@@ -88,7 +127,6 @@ void dbt_file_source::read_source_events(std::shared_ptr<std::list<event_t> > ev
+ 	} else {
+ 		std::cerr << "invalid frame type" << std::endl;
+ 	}
+-	delete[] buffer;
+ }
+ /******************************************************************************
+ 	source_multiplexer
+@@ -128,7 +166,10 @@ void source_multiplexer::init_source(size_t batch_size, size_t parallel, bool is
+ 		std::shared_ptr<source> s = (*it);
+ 		if(s) {
+ 			s->init_source();
+-			s->read_source_events(eventList, eventQue);
++			// Only read events ahead of time if we deal with an is_table object
++			if (is_table) {
++			  s->read_source_events(eventList, eventQue);
++			}
+ 		}
+ 	}
+ 	if(batch_size > 1) {
+diff --git a/ddbtoaster/srccpp/lib/streams.hpp b/ddbtoaster/srccpp/lib/streams.hpp
+index 8833eea..ed0f3a8 100644
+--- a/ddbtoaster/srccpp/lib/streams.hpp
++++ b/ddbtoaster/srccpp/lib/streams.hpp
+@@ -63,8 +63,12 @@ struct source
+ 
+ struct dbt_file_source : public source
+ {
+-    char *data = nullptr;
+-    size_t size;
++#if defined(__rtems__)
++    typedef std::ifstream file_stream;
++    std::shared_ptr<file_stream> source_stream;
++#endif
++    char *buffer;
++    size_t bufferLength;
+ 
+     dbt_file_source(const std::string& path, frame_descriptor& f, std::shared_ptr<stream_adaptor> a);
+ 
+-- 
+2.10.2
+

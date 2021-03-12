@@ -1,0 +1,166 @@
+From 7ace6d1cdcd73775f66c7d6dc35811d61ee9494c Mon Sep 17 00:00:00 2001
+From: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Date: Thu, 1 Oct 2020 23:48:33 +0200
+Subject: [PATCH 08/12] Enable looping over stream data inputs
+
+To save memory on embedded systems with little RAM, yet
+enable long-running measurements, allow for looping
+multiple times over the same data, specified by --iterations.
+This requires that data in memory remain unchanged between
+runs, which this patch also guarantees by locally reverting
+all inserted NULL bytes back to their original value
+after processing.
+
+Signed-off-by: Wolfgang Mauerer <wolfgang.mauerer@oth-regensburg.de>
+Reviewed-by: Stefanie Scherzinger <stefanie.scherzinger@uni-passau.de>
+---
+ ddbtoaster/srccpp/lib/StreamProgram.hpp     | 20 ++++++++++++++++----
+ ddbtoaster/srccpp/lib/runtime.cpp           |  6 +++++-
+ ddbtoaster/srccpp/lib/runtime.hpp           |  4 +++-
+ ddbtoaster/srccpp/lib/standard_adaptors.cpp |  3 +++
+ 4 files changed, 27 insertions(+), 6 deletions(-)
+
+diff --git a/ddbtoaster/srccpp/lib/StreamProgram.hpp b/ddbtoaster/srccpp/lib/StreamProgram.hpp
+index 6064cb9..6356cd2 100644
+--- a/ddbtoaster/srccpp/lib/StreamProgram.hpp
++++ b/ddbtoaster/srccpp/lib/StreamProgram.hpp
+@@ -6,6 +6,7 @@
+ namespace dbtoaster {
+   class StreamProgram : public Program {
+   private:
++	  unsigned int iterations;
+ 	  void estimate_tuple_count() {
+ 		  size_t tuples = 0;
+ 
+@@ -30,13 +31,14 @@ namespace dbtoaster {
+ 		  }
+ 
+ 		  // Add one to approximate ceil(...)
+-		  resize_log_buffer(tuples/log_count_every + 1);
++		  resize_log_buffer(iterations*(tuples/log_count_every + 1));
+ 	  };
+ 
+   public:
+   StreamProgram(int argc=0, char *argv[] = nullptr): Program(argc, argv) {};
+ 	  void init() {
+ 		  table_multiplexer.init_source(run_opts->batch_size, run_opts->parallel, true);
++		  iterations = run_opts->iterations;
+ 		  process_tables();
+ 		  data.on_system_ready_event();
+ 	  };
+@@ -55,7 +57,7 @@ namespace dbtoaster {
+ 
+ 			  std::shared_ptr<dbt_file_source> s = std::dynamic_pointer_cast<dbt_file_source> (*it);
+ 
+-			  if (!s) {
++			  if (!s || !s->buffer) {
+ 				  // Not sure how this should happen, but DBToaster makes a
+ 				  // corresponding checks
+ 				  cerr << "Internal error: Empty file source?!" << endl;
+@@ -72,11 +74,21 @@ namespace dbtoaster {
+ 			  char* start_event_pos = s->buffer;
+ 			  char* end_event_pos;
+ 
+-			  while(start_event_pos) {
++			  size_t iter = 0;
++			  char c;
++			  while(iter < iterations) {
+ 				  end_event_pos = strstr(start_event_pos, delim);
+-				  if(!end_event_pos || end_event_pos == s->buffer + s->bufferLength) break;
++
++				  if(!end_event_pos || end_event_pos == s->buffer + s->bufferLength) {
++					  iter +=1;
++                      start_event_pos = s->buffer;
++					  continue;
++				  }
++
++				  c = end_event_pos[0];
+ 				  *end_event_pos = '\0';
+ 				  s->adaptor->read_adaptor_events(start_event_pos,eventList,eventQue);
++				  end_event_pos[0] = c;
+ 
+ 				  while (!eventList->empty()) {
+ 					  process_stream_event(eventList->front());
+diff --git a/ddbtoaster/srccpp/lib/runtime.cpp b/ddbtoaster/srccpp/lib/runtime.cpp
+index cc668fa..4b2c83e 100644
+--- a/ddbtoaster/srccpp/lib/runtime.cpp
++++ b/ddbtoaster/srccpp/lib/runtime.cpp
+@@ -31,6 +31,7 @@ runtime_options::runtime_options(int argc, char* argv[]) :
+   , trace_counter(0)
+   , trace_step(0)
+   , log_tuple_count_every(0)
++  , iterations(1)
+   , async(false)
+   , batch_size(0)
+   , parallel(MIX_INPUT_TUPLES)
+@@ -113,7 +114,10 @@ void runtime_options::process_options(int argc, char* argv[])
+ 			case LOGCOUNT:
+ 				log_tuple_count_every = std::atoi(opt.arg);
+ 				break;
+-			case BATCH_SIZE:
++			case ITERATIONS:
++				iterations = std::atoi(opt.arg);
++				break;
++		        case BATCH_SIZE:
+ 				batch_size = std::atoi(opt.arg);
+ 				break;
+ 			case PARALLEL_INPUT:
+diff --git a/ddbtoaster/srccpp/lib/runtime.hpp b/ddbtoaster/srccpp/lib/runtime.hpp
+index 6c420ce..ce4cff5 100644
+--- a/ddbtoaster/srccpp/lib/runtime.hpp
++++ b/ddbtoaster/srccpp/lib/runtime.hpp
+@@ -67,7 +67,7 @@ namespace dbtoaster {
+       }
+     };
+ 
+-    enum  optionIndex { UNKNOWN, HELP, VERBOSE, ASYNC, LOGDIR, LOGTRIG, UNIFIED, OUTFILE, BATCH_SIZE, PARALLEL_INPUT, NO_OUTPUT, SAMPLESZ, SAMPLEPRD, STATSFILE, TRACE, TRACEDIR, TRACESTEP, LOGCOUNT };
++    enum  optionIndex { UNKNOWN, HELP, VERBOSE, ASYNC, LOGDIR, LOGTRIG, UNIFIED, OUTFILE, BATCH_SIZE, PARALLEL_INPUT, NO_OUTPUT, SAMPLESZ, SAMPLEPRD, STATSFILE, TRACE, TRACEDIR, TRACESTEP, LOGCOUNT, ITERATIONS };
+     const option::Descriptor usage[] = {
+     { UNKNOWN,       0,"", "",           Arg::Unknown, "dbtoaster query options:" },
+     { HELP,          0,"h","help",       Arg::None,    "  -h       , \t--help  \tlist available options." },
+@@ -89,6 +89,7 @@ namespace dbtoaster {
+     { TRACEDIR, 0,"","trace-dir",   Arg::Required,"  \t--trace-dir=<arg>  \ttrace output dir." },
+     { TRACESTEP,0,"","trace-step",  Arg::Numeric, "  \t--trace-step=<arg>  \ttrace step size." },
+     { LOGCOUNT, 0,"","log-count",   Arg::Numeric, "  \t--log-count=<arg>  \tlog tuple count every [arg] updates." },
++    { ITERATIONS, 1,"","iterations",   Arg::Numeric, "  \t--iterations=<arg>  \titerate [arg] times over the dataset." },
+     { 0, 0, 0, 0, 0, 0 } };
+     
+     struct runtime_options {
+@@ -109,6 +110,7 @@ namespace dbtoaster {
+       unsigned int trace_counter, trace_step;
+       std::unordered_set<std::string> traced_maps;
+       unsigned int log_tuple_count_every;
++      unsigned int iterations;
+ 
+       // Verbose
+       static bool _verbose;
+diff --git a/ddbtoaster/srccpp/lib/standard_adaptors.cpp b/ddbtoaster/srccpp/lib/standard_adaptors.cpp
+index 4a4698c..81baf07 100644
+--- a/ddbtoaster/srccpp/lib/standard_adaptors.cpp
++++ b/ddbtoaster/srccpp/lib/standard_adaptors.cpp
+@@ -325,12 +325,14 @@ bool order_book_adaptor::parse_message(char* data, order_book_message& r) {
+ 	char* start = data;
+ 	char* end = start;
+ 	char action;
++	char c;
+ 
+ 	for (int i = 0; i < 5; ++i)
+ 	{
+ 	  while ( *end && *end != ',' ) ++end;
+ 	  if ( start == end ) { return parse_error(data, i); }
+ 	  if ( *end == '\0' && i != 4 ) { return parse_error(data, i); }
++	  c = end[0];
+ 	  *end = '\0';
+ 
+ 	  switch (i) {
+@@ -354,6 +356,7 @@ bool order_book_adaptor::parse_message(char* data, order_book_message& r) {
+ 	  default: return parse_error(data, i);
+ 	  }
+ 
++	  end[0] = c;
+ 	  start = ++end;
+ 	}
+ 	return true;
+-- 
+2.10.2
+
